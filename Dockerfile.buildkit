@@ -1,0 +1,82 @@
+# syntax=docker/dockerfile:1.4
+# Optimized Dockerfile using BuildKit cache mounts for fastest builds
+
+# Stage 1: Build TDLib (with build cache)
+FROM golang:1.24-bookworm AS tdlib-builder
+
+# Install TDLib build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    gperf \
+    libssl-dev \
+    zlib1g-dev \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build TDLib with cache mount for faster rebuilds (commit 971684a - compatible with zelenin/go-tdlib v0.7.2)
+WORKDIR /tmp
+RUN --mount=type=cache,target=/tmp/td-cache \
+    if [ ! -d /tmp/td-cache/td ]; then \
+        git clone https://github.com/tdlib/td.git /tmp/td-cache/td && \
+        cd /tmp/td-cache/td && git checkout 971684a; \
+    fi && \
+    cp -r /tmp/td-cache/td . && \
+    cd td && \
+    mkdir -p build && cd build && \
+    cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local .. && \
+    make -j$(nproc) && \
+    make install && \
+    ldconfig
+
+# Stage 2: Build Go application
+FROM golang:1.24-bookworm AS app-builder
+
+# Copy TDLib from previous stage
+COPY --from=tdlib-builder /usr/local/lib/libtdjson* /usr/local/lib/
+COPY --from=tdlib-builder /usr/local/include/td /usr/local/include/td
+RUN ldconfig
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libssl-dev \
+    zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy go mod files and download dependencies (cached layer)
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+# Copy source code
+COPY . .
+
+# Build with Go build cache
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=1 go build -tags libtdjson -v -o tdclient ./cmd/tdclient
+
+# Stage 3: Runtime
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y \
+    libssl3 \
+    zlib1g \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy TDLib and application
+COPY --from=tdlib-builder /usr/local/lib/libtdjson* /usr/local/lib/
+COPY --from=app-builder /app/tdclient /usr/local/bin/tdclient
+RUN ldconfig
+
+WORKDIR /app
+RUN mkdir -p /app/data/tdlib /app/data/files
+
+VOLUME ["/app/data"]
+
+ENTRYPOINT ["tdclient"]
+CMD ["-config", "/app/config.yaml"]

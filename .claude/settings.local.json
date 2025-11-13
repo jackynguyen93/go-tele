@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(go mod tidy:*)",
+      "Bash(go build:*)",
+      "Bash(brew --prefix:*)",
+      "Bash(chmod:*)",
+      "Bash(./build.sh)",
+      "Bash(brew info:*)",
+      "Bash(pkg-config:*)",
+      "Bash(go list:*)",
+      "Bash(cat:*)",
+      "Bash(CGO_ENABLED=1 CGO_CFLAGS=\"-I/usr/local/tdlib-1.8.19/include\" CGO_LDFLAGS=\"-L/usr/local/tdlib-1.8.19/lib\" DYLD_LIBRARY_PATH=\"/usr/local/tdlib-1.8.19/lib\" go build:*)",
+      "Bash(CGO_ENABLED=1 CGO_CFLAGS=\"-I/usr/local/tdlib-1.8.19/include -I/opt/homebrew/opt/openssl@3/include\" CGO_LDFLAGS=\"-L/usr/local/tdlib-1.8.19/lib -L/opt/homebrew/opt/openssl@3/lib\" DYLD_LIBRARY_PATH=\"/usr/local/tdlib-1.8.19/lib:/opt/homebrew/opt/openssl@3/lib\" go build:*)",
+      "Bash(go clean:*)",
+      "Bash(CGO_ENABLED=1 CGO_CFLAGS=\"-I/usr/local/tdlib-1.8.19/include -I/opt/homebrew/opt/openssl@3/include\" CGO_LDFLAGS=\"-L/usr/local/tdlib-1.8.19/lib -L/opt/homebrew/opt/openssl@3/lib -Wl,-rpath,/usr/local/tdlib-1.8.19/lib\" DYLD_LIBRARY_PATH=\"/usr/local/tdlib-1.8.19/lib:/opt/homebrew/opt/openssl@3/lib\" go build:*)",
+      "Bash(docker --version:*)",
+      "Bash(test:*)",
+      "Bash(docker-compose:*)",
+      "Bash(docker compose:*)",
+      "Bash(tee:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(docker images:*)",
+      "WebFetch(domain:pkg.go.dev)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebSearch"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

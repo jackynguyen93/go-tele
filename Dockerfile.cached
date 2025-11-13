@@ -1,0 +1,83 @@
+# Optimized Dockerfile with cached TDLib build
+# TDLib is built in a separate stage that can be cached
+
+# Stage 1: Build TDLib (this stage will be cached)
+FROM golang:1.24-bookworm AS tdlib-builder
+
+# Install TDLib build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    gperf \
+    libssl-dev \
+    zlib1g-dev \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build TDLib from source (commit 971684a - compatible with zelenin/go-tdlib v0.7.2)
+WORKDIR /tmp
+RUN git clone https://github.com/tdlib/td.git && \
+    cd td && \
+    git checkout 971684a && \
+    mkdir build && cd build && \
+    cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local .. && \
+    make -j$(nproc) && \
+    make install && \
+    ldconfig && \
+    cd / && rm -rf /tmp/td
+
+# Stage 2: Build Go application (this will rebuild when code changes)
+FROM golang:1.24-bookworm AS app-builder
+
+# Copy TDLib from previous stage
+COPY --from=tdlib-builder /usr/local/lib/libtdjson* /usr/local/lib/
+COPY --from=tdlib-builder /usr/local/include/td /usr/local/include/td
+RUN ldconfig
+
+# Install minimal build dependencies for Go app
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libssl-dev \
+    zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy and download Go dependencies (cached if go.mod/go.sum don't change)
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code (this invalidates cache when code changes)
+COPY . .
+
+# Build the application
+RUN CGO_ENABLED=1 \
+    go build -tags libtdjson -v -o tdclient ./cmd/tdclient
+
+# Stage 3: Runtime (minimal image with only what's needed)
+FROM debian:bookworm-slim
+
+# Install runtime dependencies only
+RUN apt-get update && apt-get install -y \
+    libssl3 \
+    zlib1g \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy TDLib libraries from builder
+COPY --from=tdlib-builder /usr/local/lib/libtdjson* /usr/local/lib/
+RUN ldconfig
+
+# Copy application from app builder
+COPY --from=app-builder /app/tdclient /usr/local/bin/tdclient
+
+# Create data directories
+WORKDIR /app
+RUN mkdir -p /app/data/tdlib /app/data/files
+
+# Volume for persistent data
+VOLUME ["/app/data"]
+
+# Run
+ENTRYPOINT ["tdclient"]
+CMD ["-config", "/app/config.yaml"]

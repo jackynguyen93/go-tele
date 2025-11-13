@@ -1,0 +1,52 @@
+# Telegram API Configuration
+telegram:
+  # Get these from https://my.telegram.org
+  api_id: 12345678
+  api_hash: "your_api_hash_here"
+
+  # For user authentication (regular account)
+  phone_number: "+1234567890"
+
+  # For bot authentication (leave phone_number empty if using bot)
+  # bot_token: "your_bot_token_here"
+
+  # Use test data center (for development/testing)
+  use_test_dc: false
+
+# Database Configuration
+database:
+  # Database type (currently only sqlite is supported)
+  type: "sqlite"
+  # Database file path
+  dsn: "data/messages.db"
+
+# TDLib Configuration
+tdlib:
+  # Directory for TDLib database files
+  database_directory: "data/tdlib"
+  # Directory for downloaded files
+  files_directory: "data/files"
+  # Enable file database
+  use_file_database: true
+  # Enable chat info database
+  use_chat_info_database: true
+  # Enable message database
+  use_message_database: true
+  # System settings
+  system_language: "en"
+  device_model: "Server"
+  system_version: "Linux"
+  app_version: "1.0.0"
+
+# Channels to monitor (usernames without @)
+channels:
+  - "telegram"
+  - "durov"
+  # Add more channels here
+
+# Logging Configuration
+logging:
+  # Log level: debug, info, warn, error
+  level: "info"
+  # Log format: text, json
+  format: "text"

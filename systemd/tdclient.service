@@ -1,0 +1,23 @@
+[Unit]
+Description=Telegram Channel Monitor
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/path/to/tdlib-go
+ExecStart=/path/to/tdlib-go/tdclient -config /path/to/tdlib-go/config.yaml
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/path/to/tdlib-go/data
+
+[Install]
+WantedBy=multi-user.target

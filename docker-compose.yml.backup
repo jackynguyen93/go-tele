@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  tdclient:
+    build:
+      context: .
+      dockerfile: Dockerfile.fast
+    container_name: telegram-channel-monitor
+    restart: unless-stopped
+
+    volumes:
+      # Mount config file
+      - ./config.yaml:/app/config.yaml:ro
+
+      # Mount data directory for persistence
+      - ./data:/app/data
+
+    # Interactive mode for CLI
+    stdin_open: true
+    tty: true
+
+    # Environment variables (optional overrides)
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Optional: Network configuration
+networks:
+  default:
+    driver: bridge

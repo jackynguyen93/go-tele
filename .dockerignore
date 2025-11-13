@@ -1,0 +1,34 @@
+# Ignore unnecessary files in Docker build
+.git
+.gitignore
+.idea
+*.md
+!README.md
+
+# Ignore build artifacts
+tdclient
+tdclient-*
+build/
+*.test
+
+# Ignore data directories
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Ignore config (will be mounted)
+config.yaml
+
+# Ignore temporary files
+tmp/
+temp/
+*.tmp
+.DS_Store
+
+# Ignore documentation (except README)
+ARCHITECTURE.md
+PROJECT_SUMMARY.md
+QUICKSTART.md
+BUILD_INSTRUCTIONS.md
+INSTALL_TDLIB.md

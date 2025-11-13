@@ -1,0 +1,68 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+tdclient
+tdclient-*
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Dependency directories
+vendor/
+
+# Configuration files (contains secrets)
+config.yaml
+
+# Data directories
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# TDLib files
+tdlib/
+*.db-journal
+
+# Log files
+*.log
+logs/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build artifacts
+dist/
+build/
+bin/
+
+# Test coverage
+coverage.txt
+coverage.html
+
+# Environment files
+.env
+.env.local
+
+# Downloaded files
+files/
+downloads/
+
+# Temporary files
+tmp/
+temp/
+*.tmp

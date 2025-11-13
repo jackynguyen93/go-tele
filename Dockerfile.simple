@@ -1,0 +1,61 @@
+# Simplified Dockerfile using system TDLib
+FROM golang:1.24-alpine
+
+# Install runtime and build dependencies
+RUN apk add --no-cache \
+    gcc \
+    g++ \
+    make \
+    musl-dev \
+    openssl-dev \
+    zlib-dev \
+    linux-headers \
+    ca-certificates \
+    git \
+    cmake \
+    gperf \
+    readline-dev
+
+# Build TDLib from source (commit 971684a - compatible with zelenin/go-tdlib v0.7.2)
+WORKDIR /tmp
+RUN git clone https://github.com/tdlib/td.git && \
+    cd td && \
+    git checkout 971684a && \
+    mkdir build && \
+    cd build && \
+    cmake -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_INSTALL_PREFIX=/usr/local \
+          .. && \
+    cmake --build . -j$(nproc) && \
+    cmake --build . --target install && \
+    cd / && \
+    rm -rf /tmp/td
+
+# Set working directory
+WORKDIR /app
+
+# Copy go mod files
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the application
+RUN CGO_ENABLED=1 \
+    CGO_CFLAGS="-I/usr/local/include" \
+    CGO_LDFLAGS="-L/usr/local/lib" \
+    go build -tags libtdjson -v -o tdclient ./cmd/tdclient
+
+# Create directories for data
+RUN mkdir -p /app/data/tdlib /app/data/files
+
+# Set environment variables
+ENV LD_LIBRARY_PATH=/usr/local/lib
+
+# Volume for persistent data
+VOLUME ["/app/data"]
+
+# Run the application
+ENTRYPOINT ["./tdclient"]
+CMD ["-config", "/app/config.yaml"]
