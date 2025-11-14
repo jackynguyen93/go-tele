@@ -6,7 +6,7 @@
 !README.md
 
 # Ignore build artifacts
-tdclient
+/tdclient
 tdclient-*
 build/
 *.test
