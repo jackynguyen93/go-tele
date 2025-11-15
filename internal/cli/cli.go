@@ -95,13 +95,16 @@ func (c *CLI) printHelp() {
 	fmt.Println("\nAvailable Commands:")
 	fmt.Println("  help                          - Show this help message")
 	fmt.Println("  list, ls                      - List all monitored channels")
-	fmt.Println("  add <username>                - Add/subscribe to a channel")
+	fmt.Println("  add <identifier>              - Add/subscribe to a channel")
+	fmt.Println("                                  Supports: username, channel ID, or invite link")
 	fmt.Println("  remove <channel_id>           - Remove/unsubscribe from a channel")
 	fmt.Println("  history <channel_id> <limit>  - Fetch historical messages")
 	fmt.Println("  status                        - Show connection status")
 	fmt.Println("  quit, exit                    - Exit the application")
 	fmt.Println("\nExamples:")
-	fmt.Println("  add telegram")
+	fmt.Println("  add telegram                              (username)")
+	fmt.Println("  add -1002233859472                        (channel ID)")
+	fmt.Println("  add https://t.me/+wIr66-O-XaxjOWI0        (invite link)")
 	fmt.Println("  remove 1234567890")
 	fmt.Println("  history 1234567890 50")
 }
@@ -135,21 +138,31 @@ func (c *CLI) listChannels() {
 // addChannel subscribes to a new channel
 func (c *CLI) addChannel(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: add <username>")
+		return fmt.Errorf("usage: add <identifier> (username, channel ID, or invite link)")
 	}
 
-	username := args[0]
+	identifier := args[0]
 
-	// Remove @ prefix if present
-	username = strings.TrimPrefix(username, "@")
+	// Remove @ prefix if present for usernames
+	identifier = strings.TrimPrefix(identifier, "@")
 
-	fmt.Printf("Subscribing to channel: @%s...\n", username)
+	// Detect and display the type of identifier
+	var identifierType string
+	if strings.Contains(identifier, "t.me/") || strings.Contains(identifier, "telegram.me/") {
+		identifierType = "invite link"
+	} else if _, err := strconv.ParseInt(identifier, 10, 64); err == nil {
+		identifierType = "channel ID"
+	} else {
+		identifierType = "username"
+	}
 
-	if err := c.monitor.SubscribeChannel(username); err != nil {
+	fmt.Printf("Subscribing to channel by %s: %s...\n", identifierType, identifier)
+
+	if err := c.monitor.SubscribeChannel(identifier); err != nil {
 		return fmt.Errorf("failed to subscribe: %w", err)
 	}
 
-	fmt.Printf("✓ Successfully subscribed to @%s\n", username)
+	fmt.Printf("✓ Successfully subscribed!\n")
 
 	// Ask if user wants to fetch history
 	fmt.Print("Fetch message history? (y/N): ")
@@ -168,15 +181,34 @@ func (c *CLI) addChannel(args []string) error {
 
 				// Get the channel info to fetch history
 				channels := c.monitor.ListChannels()
-				for _, ch := range channels {
-					if ch.Username == username {
-						fmt.Printf("Fetching %d messages...\n", limit)
-						if err := c.monitor.FetchHistory(ch.ChannelID, int32(limit)); err != nil {
-							return fmt.Errorf("failed to fetch history: %w", err)
-						}
-						fmt.Println("✓ History fetched successfully")
-						break
+				var channelID int64
+
+				// If identifier is a channel ID, use it directly
+				if identifierType == "channel ID" {
+					if id, err := strconv.ParseInt(identifier, 10, 64); err == nil {
+						channelID = id
 					}
+				} else {
+					// Otherwise, find the most recently added channel (last in list)
+					// This works for both username and invite link cases
+					if len(channels) > 0 {
+						// Find the channel that was just added
+						for _, ch := range channels {
+							if ch.Username == identifier || ch.ChannelID > channelID {
+								channelID = ch.ChannelID
+							}
+						}
+					}
+				}
+
+				if channelID != 0 {
+					fmt.Printf("Fetching %d messages...\n", limit)
+					if err := c.monitor.FetchHistory(channelID, int32(limit)); err != nil {
+						return fmt.Errorf("failed to fetch history: %w", err)
+					}
+					fmt.Println("✓ History fetched successfully")
+				} else {
+					fmt.Println("⚠ Could not determine channel ID for history fetch")
 				}
 			}
 		}

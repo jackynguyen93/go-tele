@@ -3,6 +3,8 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -186,24 +188,124 @@ func (c *Client) GetChatHistory(chatID int64, limit int32) ([]*client.Message, e
 	return history.Messages, nil
 }
 
-// JoinChat joins a channel by username
-func (c *Client) JoinChat(username string) (*client.Chat, error) {
-	// First, search for the chat
-	chat, err := c.GetChat(username)
+// JoinChat joins a channel by username, ID, or invite link
+func (c *Client) JoinChat(identifier string) (*client.Chat, error) {
+	var chat *client.Chat
+	var err error
+
+	// Detect the type of identifier
+	if isInviteLink(identifier) {
+		// Handle invite link (e.g., https://t.me/+wIr66-O-XaxjOWI0 or t.me/joinchat/...)
+		chat, err = c.joinByInviteLink(identifier)
+		if err != nil {
+			return nil, fmt.Errorf("failed to join by invite link: %w", err)
+		}
+	} else if isChatID(identifier) {
+		// Handle channel ID (e.g., -1002233859472)
+		chatID, parseErr := parseChatID(identifier)
+		if parseErr != nil {
+			return nil, fmt.Errorf("invalid chat ID: %w", parseErr)
+		}
+		chat, err = c.joinByChatID(chatID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to join by chat ID: %w", err)
+		}
+	} else {
+		// Handle username (existing functionality)
+		chat, err = c.GetChat(identifier)
+		if err != nil {
+			return nil, fmt.Errorf("failed to find chat: %w", err)
+		}
+
+		// Join the chat
+		joinReq := &client.JoinChatRequest{
+			ChatId: chat.Id,
+		}
+
+		_, err = c.tdClient.JoinChat(joinReq)
+		if err != nil {
+			c.logger.Warnf("Join chat returned error (might already be member): %v", err)
+		}
+	}
+
+	return chat, nil
+}
+
+// isInviteLink checks if the identifier is an invite link
+func isInviteLink(identifier string) bool {
+	return strings.Contains(identifier, "t.me/+") ||
+		strings.Contains(identifier, "t.me/joinchat/") ||
+		strings.Contains(identifier, "telegram.me/+") ||
+		strings.Contains(identifier, "telegram.me/joinchat/")
+}
+
+// isChatID checks if the identifier is a numeric chat ID
+func isChatID(identifier string) bool {
+	_, err := strconv.ParseInt(identifier, 10, 64)
+	return err == nil
+}
+
+// parseChatID parses a string into a chat ID
+func parseChatID(identifier string) (int64, error) {
+	return strconv.ParseInt(identifier, 10, 64)
+}
+
+// joinByInviteLink joins a chat using an invite link
+func (c *Client) joinByInviteLink(link string) (*client.Chat, error) {
+	c.logger.Infof("Joining chat by invite link: %s", link)
+
+	// Check the invite link first
+	checkReq := &client.CheckChatInviteLinkRequest{
+		InviteLink: link,
+	}
+
+	linkInfo, err := c.tdClient.CheckChatInviteLink(checkReq)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to check invite link: %w", err)
+	}
+
+	c.logger.Infof("Invite link info: %+v", linkInfo)
+
+	// Join by invite link
+	joinReq := &client.JoinChatByInviteLinkRequest{
+		InviteLink: link,
+	}
+
+	chat, err := c.tdClient.JoinChatByInviteLink(joinReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to join by invite link: %w", err)
+	}
+
+	c.logger.Infof("Successfully joined chat: %s (ID: %d)", chat.Title, chat.Id)
+
+	return chat, nil
+}
+
+// joinByChatID joins a chat using its ID
+func (c *Client) joinByChatID(chatID int64) (*client.Chat, error) {
+	c.logger.Infof("Joining chat by ID: %d", chatID)
+
+	// Get the chat first
+	getReq := &client.GetChatRequest{
+		ChatId: chatID,
+	}
+
+	chat, err := c.tdClient.GetChat(getReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get chat: %w", err)
 	}
 
 	// Join the chat
 	joinReq := &client.JoinChatRequest{
-		ChatId: chat.Id,
+		ChatId: chatID,
 	}
 
 	_, err = c.tdClient.JoinChat(joinReq)
 	if err != nil {
-		// If already a member, ignore the error
 		c.logger.Warnf("Join chat returned error (might already be member): %v", err)
 	}
+
+	c.logger.Infof("Successfully joined chat: %s (ID: %d)", chat.Title, chat.Id)
 
 	return chat, nil
 }
