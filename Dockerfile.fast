@@ -1,30 +1,15 @@
-# Ultra-fast Dockerfile - no TDLib build, use dynamic linking
-# Note: This requires tdlib to be available in the base image or pre-installed
+# Ultra-fast Dockerfile - uses pre-built TDLib base image
+# Build TDLib base image first: ./build-tdlib-base.sh
+# Then this Dockerfile only rebuilds your Go code (~30 seconds)
 
-FROM golang:1.24-bookworm AS builder
+FROM tdlib-base:1.8.19 AS builder
 
-# Install TDLib from Debian repos (if available) or minimal dependencies
+# TDLib is already installed in the base image, just install Go build deps
 RUN apt-get update && apt-get install -y \
     build-essential \
-    cmake \
-    gperf \
     libssl-dev \
     zlib1g-dev \
-    git \
-    wget \
-    ca-certificates
-
-# Build TDLib from source (commit 971684a - compatible with zelenin/go-tdlib v0.7.2)
-WORKDIR /tmp
-RUN git clone https://github.com/tdlib/td.git && \
-    cd td && \
-    git checkout 971684a && \
-    mkdir build && cd build && \
-    cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local .. && \
-    make -j$(nproc) && \
-    make install && \
-    ldconfig && \
-    cd / && rm -rf /tmp/td
+    && rm -rf /var/lib/apt/lists/*
 
 # Build Go application
 WORKDIR /app
