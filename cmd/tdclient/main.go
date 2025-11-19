@@ -15,6 +15,7 @@ import (
 	"tdlib-go/internal/config"
 	"tdlib-go/internal/storage"
 	"tdlib-go/internal/telegram"
+	"tdlib-go/internal/trading"
 )
 
 var (
@@ -74,6 +75,20 @@ func main() {
 	// Initialize monitor
 	monitor := telegram.NewMonitor(client, repo, cfg, logger)
 
+	// Initialize trading engine
+	tradingEngine, err := trading.NewEngine(repo, cfg, logger)
+	if err != nil {
+		logger.Fatalf("Failed to create trading engine: %v", err)
+	}
+
+	// Set message callback for trading
+	monitor.SetMessageCallback(tradingEngine.ProcessMessage)
+
+	// Start trading engine
+	if err := tradingEngine.Start(); err != nil {
+		logger.Fatalf("Failed to start trading engine: %v", err)
+	}
+
 	// Start monitoring
 	if err := monitor.Start(); err != nil {
 		logger.Fatalf("Failed to start monitor: %v", err)
@@ -113,6 +128,11 @@ func main() {
 
 	// Graceful shutdown
 	logger.Info("Initiating graceful shutdown...")
+
+	// Stop trading engine
+	if err := tradingEngine.Stop(); err != nil {
+		logger.Errorf("Error stopping trading engine: %v", err)
+	}
 
 	// Stop client
 	if err := client.Stop(); err != nil {

@@ -66,3 +66,20 @@ downloads/
 tmp/
 temp/
 *.tmp
+
+# Node.js / Vue.js
+web/node_modules/
+web/dist/
+web/.vite/
+web/.env
+web/.env.local
+web/.env.*.local
+
+# Production build
+/tradingbot
+/tradingbot.exe
+
+# Trading bot specific
+*.db
+*.db-wal
+*.db-shm

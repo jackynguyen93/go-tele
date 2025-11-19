@@ -1,0 +1,61 @@
+# Telegram Configuration
+telegram:
+  api_id: 12345678                    # Get from https://my.telegram.org/apps
+  api_hash: "your_api_hash_here"      # Get from https://my.telegram.org/apps
+  phone_number: "+1234567890"         # Your phone number (or use bot_token)
+  # bot_token: ""                     # Alternative: Bot token instead of phone
+  use_test_dc: false                  # Use Telegram test datacenter
+
+# Database Configuration
+database:
+  type: "sqlite"
+  dsn: "data/trading.db"              # Database file path
+
+# TDLib Configuration
+tdlib:
+  database_directory: "data/tdlib"
+  files_directory: "data/files"
+  use_file_database: true
+  use_chat_info_database: true
+  use_message_database: true
+  system_language: "en"
+  device_model: "Server"
+  system_version: "Linux"
+  app_version: "1.0.0"
+
+# Telegram Channels to Monitor
+channels:
+  - "@trading_signals_channel"        # Channel username or invite link
+  - "https://t.me/crypto_signals"     # Or full URL
+
+# Binance Futures Configuration (Global Settings)
+# NOTE: API keys are now stored in database and managed via web dashboard
+binance:
+  base_url: ""                        # Optional: Custom REST API URL
+  ws_base_url: ""                     # Optional: Custom WebSocket URL
+
+# Trading Configuration
+trading:
+  enabled: true                       # Enable/disable trading
+  leverage: 10                        # Leverage for positions (1-125)
+  order_amount: 100                   # Position size in USDT
+  target_percent: 0.02                # Take profit percentage (2% = 0.02)
+  stoploss_percent: 0.01              # Stop loss percentage (1% = 0.01)
+  order_timeout: 3600                 # Timeout in seconds for TP/SL orders (1 hour)
+  signal_pattern: '(?i)\$([A-Z]{2,10})\b'  # Regex to extract symbols (e.g., $BTC, $ETH)
+  max_positions: 3                    # Maximum concurrent positions
+  dry_run: false                      # If true, parse signals but don't execute orders
+
+# Web API Configuration
+webapi:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8080
+  cors_origins:
+    - "http://localhost:3000"
+    - "http://localhost:8080"
+
+# Logging Configuration
+logging:
+  level: "info"                       # debug, info, warn, error
+  format: "text"                      # text or json

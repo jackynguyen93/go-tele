@@ -19,6 +19,9 @@ type Monitor struct {
 	logger     *logrus.Logger
 	channels   map[int64]*models.Channel
 	channelsMu sync.RWMutex
+
+	// Trading engine callback
+	onMessage func(*models.Message) error
 }
 
 // NewMonitor creates a new channel monitor
@@ -197,5 +200,17 @@ func (m *Monitor) handleMessage(msg *models.Message) error {
 		return fmt.Errorf("failed to save message: %w", err)
 	}
 
+	// Call message callback (for trading engine)
+	if m.onMessage != nil {
+		if err := m.onMessage(msg); err != nil {
+			m.logger.Errorf("Message callback error: %v", err)
+		}
+	}
+
 	return nil
+}
+
+// SetMessageCallback sets the message callback function
+func (m *Monitor) SetMessageCallback(callback func(*models.Message) error) {
+	m.onMessage = callback
 }

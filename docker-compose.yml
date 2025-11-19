@@ -2,12 +2,12 @@ services:
   tdclient:
     build:
       context: .
-      dockerfile: Dockerfile.cached
+      dockerfile: Dockerfile.fast
       # Use BuildKit for better caching
       args:
         BUILDKIT_INLINE_CACHE: 1
-    image: tdclient:cached
-    container_name: telegram-channel-monitor
+    image: tdclient:latest
+    container_name: telegram-trading-bot
     # Remove restart policy for interactive authentication
     # restart: unless-stopped
 
@@ -18,9 +18,13 @@ services:
       # Mount data directory for persistence
       - ./data:/app/data
 
-    # Interactive mode for CLI
+    # Interactive mode for CLI and Telegram auth
     stdin_open: true
     tty: true
+
+    # Expose web API port
+    ports:
+      - "8080:8080"
 
     # Environment variables (optional overrides)
     environment:
