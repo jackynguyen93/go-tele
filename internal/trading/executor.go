@@ -2,6 +2,7 @@ package trading
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"sync"
 	"time"
@@ -85,16 +86,6 @@ func NewOrderExecutor(binanceClient *binance.Client, repo *storage.Repository, c
 
 // ExecuteSignal executes a trading signal
 func (e *OrderExecutor) ExecuteSignal(signal *models.Signal) error {
-	if e.config.Trading.DryRun {
-		e.logger.Warnf("DRY RUN: Would execute signal for %s", signal.Symbol)
-		return nil
-	}
-
-	// Check max positions
-	if err := e.checkMaxPositions(); err != nil {
-		return err
-	}
-
 	// Get current price
 	ticker, err := e.binanceClient.GetSymbolPriceTicker(signal.Symbol)
 	if err != nil {
@@ -119,6 +110,79 @@ func (e *OrderExecutor) ExecuteSignal(signal *models.Signal) error {
 	// Calculate quantity based on order amount
 	quantity := orderAmount / entryPrice
 
+	// Get exchange info to determine precision
+	exchangeInfo, err := e.binanceClient.GetExchangeInfo()
+	if err != nil {
+		return fmt.Errorf("failed to get exchange info: %w", err)
+	}
+
+	// Find symbol info
+	var symbolInfo *binance.SymbolInfo
+	for i := range exchangeInfo.Symbols {
+		if exchangeInfo.Symbols[i].Symbol == signal.Symbol {
+			symbolInfo = &exchangeInfo.Symbols[i]
+			break
+		}
+	}
+
+	if symbolInfo == nil {
+		return fmt.Errorf("symbol %s not found in exchange info", signal.Symbol)
+	}
+
+	// Get filters for precise rounding
+	var lotFilter, priceFilter, minNotionalFilter *binance.FilterInfo
+	for i := range symbolInfo.Filters {
+		filter := &symbolInfo.Filters[i]
+		switch filter.FilterType {
+		case "MARKET_LOT_SIZE":
+			lotFilter = filter
+		case "LOT_SIZE":
+			if lotFilter == nil { // Prefer MARKET_LOT_SIZE over LOT_SIZE
+				lotFilter = filter
+			}
+		case "PRICE_FILTER":
+			priceFilter = filter
+		case "MIN_NOTIONAL":
+			minNotionalFilter = filter
+		}
+	}
+
+	// Round quantity and prices using filter-based precision
+	if lotFilter != nil && lotFilter.StepSize != "" {
+		quantity = e.roundToStepSize(quantity, lotFilter.StepSize, lotFilter.MinQty, lotFilter.MaxQty)
+	} else {
+		// Fallback to precision-based rounding
+		quantity = e.roundToPrecision(quantity, symbolInfo.QuantityPrecision)
+	}
+
+	if priceFilter != nil && priceFilter.TickSize != "" {
+		takeProfitPrice = e.roundToStepSize(takeProfitPrice, priceFilter.TickSize, priceFilter.MinPrice, priceFilter.MaxPrice)
+		stopLossPrice = e.roundToStepSize(stopLossPrice, priceFilter.TickSize, priceFilter.MinPrice, priceFilter.MaxPrice)
+	} else {
+		// Fallback to precision-based rounding
+		takeProfitPrice = e.roundToPrecision(takeProfitPrice, symbolInfo.PricePrecision)
+		stopLossPrice = e.roundToPrecision(stopLossPrice, symbolInfo.PricePrecision)
+	}
+
+	// Check and adjust for MIN_NOTIONAL requirement
+	if minNotionalFilter != nil && minNotionalFilter.MinNotional != "" {
+		minNotional, err := strconv.ParseFloat(minNotionalFilter.MinNotional, 64)
+		if err == nil {
+			notional := quantity * entryPrice
+			if notional < minNotional {
+				// Increase quantity to meet minimum notional
+				quantity = minNotional / entryPrice
+
+				// Re-apply step size rounding after adjustment
+				if lotFilter != nil && lotFilter.StepSize != "" {
+					quantity = e.roundToStepSize(quantity, lotFilter.StepSize, lotFilter.MinQty, lotFilter.MaxQty)
+				}
+
+				e.logger.Infof("Adjusted quantity to meet MIN_NOTIONAL (%.2f USD): %.8f", minNotional, quantity)
+			}
+		}
+	}
+
 	e.logger.WithFields(logrus.Fields{
 		"symbol":            signal.Symbol,
 		"entry_price":       entryPrice,
@@ -127,16 +191,6 @@ func (e *OrderExecutor) ExecuteSignal(signal *models.Signal) error {
 		"quantity":          quantity,
 		"leverage":          leverage,
 	}).Info("Executing trading signal")
-
-	// Set leverage
-	if err := e.binanceClient.SetLeverage(signal.Symbol, leverage); err != nil {
-		return fmt.Errorf("failed to set leverage: %w", err)
-	}
-
-	// Set margin type to CROSSED
-	if err := e.binanceClient.SetMarginType(signal.Symbol, "CROSSED"); err != nil {
-		return fmt.Errorf("failed to set margin type: %w", err)
-	}
 
 	// Create position record FIRST (before orders)
 	position := &models.Position{
@@ -156,6 +210,89 @@ func (e *OrderExecutor) ExecuteSignal(signal *models.Signal) error {
 	// Save position to get ID
 	if err := e.repo.SavePosition(position); err != nil {
 		return fmt.Errorf("failed to save position: %w", err)
+	}
+
+	e.logger.Infof("Position created: ID=%d, Symbol=%s, Status=%s", position.ID, position.Symbol, position.Status)
+
+	// DRY RUN MODE: Create simulated orders without actually placing them
+	if e.config.Trading.DryRun {
+		e.logger.Warnf("DRY RUN: Simulating orders for %s (Position ID: %d)", signal.Symbol, position.ID)
+
+		// Create simulated entry order
+		entryOrder := &models.Order{
+			PositionID:      position.ID,
+			BinanceOrderID:  fmt.Sprintf("DRY_ENTRY_%d_%d", position.ID, time.Now().Unix()),
+			Symbol:          signal.Symbol,
+			Side:            "BUY",
+			Type:            "MARKET",
+			OrigQty:         quantity,
+			ExecutedQty:     quantity,
+			Price:           entryPrice,
+			Status:          "FILLED",
+			TimeInForce:     "GTC",
+			CreatedAt:       time.Now(),
+			UpdatedAt:       time.Now(),
+			OrderPurpose:    "entry",
+		}
+		now := time.Now()
+		entryOrder.FilledAt = &now
+		if err := e.repo.SaveOrder(entryOrder); err != nil {
+			e.logger.Errorf("Failed to save simulated entry order: %v", err)
+		}
+
+		// Create simulated take profit order
+		tpOrder := &models.Order{
+			PositionID:      position.ID,
+			BinanceOrderID:  fmt.Sprintf("DRY_TP_%d_%d", position.ID, time.Now().Unix()),
+			Symbol:          signal.Symbol,
+			Side:            "SELL",
+			Type:            "TAKE_PROFIT_MARKET",
+			OrigQty:         quantity,
+			ExecutedQty:     0,
+			Price:           takeProfitPrice,
+			StopPrice:       &takeProfitPrice,
+			Status:          "NEW",
+			TimeInForce:     "GTC",
+			CreatedAt:       time.Now(),
+			UpdatedAt:       time.Now(),
+			OrderPurpose:    "take_profit",
+		}
+		if err := e.repo.SaveOrder(tpOrder); err != nil {
+			e.logger.Errorf("Failed to save simulated TP order: %v", err)
+		}
+
+		// Create simulated stop loss order
+		slOrder := &models.Order{
+			PositionID:      position.ID,
+			BinanceOrderID:  fmt.Sprintf("DRY_SL_%d_%d", position.ID, time.Now().Unix()),
+			Symbol:          signal.Symbol,
+			Side:            "SELL",
+			Type:            "STOP_MARKET",
+			OrigQty:         quantity,
+			ExecutedQty:     0,
+			Price:           stopLossPrice,
+			StopPrice:       &stopLossPrice,
+			Status:          "NEW",
+			TimeInForce:     "GTC",
+			CreatedAt:       time.Now(),
+			UpdatedAt:       time.Now(),
+			OrderPurpose:    "stop_loss",
+		}
+		if err := e.repo.SaveOrder(slOrder); err != nil {
+			e.logger.Errorf("Failed to save simulated SL order: %v", err)
+		}
+
+		e.logger.Infof("DRY RUN: Created simulated position with 3 orders for %s", signal.Symbol)
+		return nil
+	}
+
+	// REAL MODE: Set leverage and margin type, then place actual orders
+	if err := e.binanceClient.SetLeverage(signal.Symbol, leverage); err != nil {
+		return fmt.Errorf("failed to set leverage: %w", err)
+	}
+
+	if err := e.binanceClient.SetMarginType(signal.Symbol, "CROSSED"); err != nil {
+		return fmt.Errorf("failed to set margin type: %w", err)
 	}
 
 	// Execute 3 orders in parallel for speed
@@ -329,19 +466,6 @@ func (e *OrderExecutor) runAsyncLogger() {
 	}
 }
 
-// checkMaxPositions checks if we can open a new position
-func (e *OrderExecutor) checkMaxPositions() error {
-	openPositions, err := e.repo.GetOpenPositions()
-	if err != nil {
-		return fmt.Errorf("failed to get open positions: %w", err)
-	}
-
-	if len(openPositions) >= e.config.Trading.MaxPositions {
-		return fmt.Errorf("max positions reached (%d/%d)", len(openPositions), e.config.Trading.MaxPositions)
-	}
-
-	return nil
-}
 
 // addOrderTimeout adds an order to the timeout tracker
 func (e *OrderExecutor) addOrderTimeout(orderID string, positionID int64, symbol string, orderType string) {
@@ -459,4 +583,39 @@ func (e *OrderExecutor) closePosition(positionID int64, exitPrice float64, reali
 // Close shuts down the executor
 func (e *OrderExecutor) Close() {
 	close(e.logQueue)
+}
+
+// roundToPrecision rounds a number to the specified decimal precision
+func (e *OrderExecutor) roundToPrecision(value float64, precision int) float64 {
+	multiplier := float64(1)
+	for i := 0; i < precision; i++ {
+		multiplier *= 10
+	}
+	return float64(int64(value*multiplier)) / multiplier
+}
+
+// roundToStepSize rounds a value to the nearest valid multiple of stepSize
+// and ensures it's within min/max bounds
+func (e *OrderExecutor) roundToStepSize(value float64, stepSize, minQty, maxQty string) float64 {
+	step, err := strconv.ParseFloat(stepSize, 64)
+	if err != nil || step == 0 {
+		e.logger.Warnf("Invalid stepSize: %s, using original value", stepSize)
+		return value
+	}
+
+	min, _ := strconv.ParseFloat(minQty, 64)
+	max, _ := strconv.ParseFloat(maxQty, 64)
+
+	// Round to nearest multiple of stepSize
+	rounded := math.Floor(value/step+0.5) * step
+
+	// Ensure within bounds
+	if min > 0 && rounded < min {
+		rounded = min
+	}
+	if max > 0 && rounded > max {
+		rounded = max
+	}
+
+	return rounded
 }

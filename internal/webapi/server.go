@@ -20,17 +20,25 @@ import (
 
 // Server represents the web API server
 type Server struct {
-	router *mux.Router
-	server *http.Server
-	repo   *storage.Repository
-	config *config.Config
-	logger *logrus.Logger
+	router  *mux.Router
+	server  *http.Server
+	repo    *storage.Repository
+	config  *config.Config
+	logger  *logrus.Logger
+	monitor Monitor
 
 	// WebSocket clients
 	wsClients   map[*websocket.Conn]bool
 	wsClientsMu sync.RWMutex
 	wsBroadcast chan interface{}
 	upgrader    websocket.Upgrader
+}
+
+// Monitor interface for telegram operations
+type Monitor interface {
+	SubscribeChannel(identifier string) error
+	UnsubscribeChannel(channelID int64) error
+	ListChannels() []*models.Channel
 }
 
 // NewServer creates a new web API server
@@ -74,6 +82,8 @@ func (s *Server) setupRoutes() {
 
 	// Channels
 	api.HandleFunc("/channels", s.handleGetChannels).Methods("GET")
+	api.HandleFunc("/channels", s.handleSubscribeChannel).Methods("POST")
+	api.HandleFunc("/channels/{id}", s.handleUnsubscribeChannel).Methods("DELETE")
 
 	// Configuration
 	api.HandleFunc("/config", s.handleGetConfig).Methods("GET")
@@ -146,6 +156,11 @@ func (s *Server) Stop() error {
 	defer cancel()
 
 	return s.server.Shutdown(ctx)
+}
+
+// SetMonitor sets the monitor instance for channel operations
+func (s *Server) SetMonitor(monitor Monitor) {
+	s.monitor = monitor
 }
 
 // Handler functions
@@ -251,20 +266,79 @@ func (s *Server) handleGetChannels(w http.ResponseWriter, r *http.Request) {
 	s.respondJSON(w, http.StatusOK, channels)
 }
 
+func (s *Server) handleSubscribeChannel(w http.ResponseWriter, r *http.Request) {
+	if s.monitor == nil {
+		s.respondError(w, http.StatusServiceUnavailable, "Monitor not initialized")
+		return
+	}
+
+	var req struct {
+		Identifier string `json:"identifier"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if req.Identifier == "" {
+		s.respondError(w, http.StatusBadRequest, "Identifier is required")
+		return
+	}
+
+	if err := s.monitor.SubscribeChannel(req.Identifier); err != nil {
+		s.respondError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to subscribe: %v", err))
+		return
+	}
+
+	s.respondJSON(w, http.StatusOK, map[string]string{"status": "subscribed", "identifier": req.Identifier})
+}
+
+func (s *Server) handleUnsubscribeChannel(w http.ResponseWriter, r *http.Request) {
+	if s.monitor == nil {
+		s.respondError(w, http.StatusServiceUnavailable, "Monitor not initialized")
+		return
+	}
+
+	vars := mux.Vars(r)
+	idStr := vars["id"]
+
+	channelID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "Invalid channel ID")
+		return
+	}
+
+	if err := s.monitor.UnsubscribeChannel(channelID); err != nil {
+		s.respondError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to unsubscribe: %v", err))
+		return
+	}
+
+	s.respondJSON(w, http.StatusOK, map[string]string{"status": "unsubscribed"})
+}
+
 func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
-	// Return safe config (without sensitive data)
+	// Try to get settings from database first
+	dbSettings, err := s.repo.GetAllSettings()
+	if err != nil {
+		s.logger.Warnf("Failed to get settings from database: %v, using config file", err)
+	}
+
+	// Build trading config from database or config file
+	tradingConfig := map[string]interface{}{
+		"enabled":          s.getSettingBool(dbSettings, "trading.enabled", s.config.Trading.Enabled),
+		"leverage":         s.getSettingInt(dbSettings, "trading.leverage", s.config.Trading.Leverage),
+		"order_amount":     s.getSettingFloat(dbSettings, "trading.order_amount", s.config.Trading.OrderAmount),
+		"target_percent":   s.getSettingFloat(dbSettings, "trading.target_percent", s.config.Trading.TargetPercent),
+		"stoploss_percent": s.getSettingFloat(dbSettings, "trading.stoploss_percent", s.config.Trading.StopLossPercent),
+		"order_timeout":    s.getSettingInt(dbSettings, "trading.order_timeout", s.config.Trading.OrderTimeout),
+		"max_positions":    s.getSettingInt(dbSettings, "trading.max_positions", s.config.Trading.MaxPositions),
+		"dry_run":          s.getSettingBool(dbSettings, "trading.dry_run", s.config.Trading.DryRun),
+		"signal_pattern":   s.getSettingString(dbSettings, "trading.signal_pattern", s.config.Trading.SignalPattern),
+	}
+
 	safeConfig := map[string]interface{}{
-		"trading": map[string]interface{}{
-			"enabled":          s.config.Trading.Enabled,
-			"leverage":         s.config.Trading.Leverage,
-			"order_amount":     s.config.Trading.OrderAmount,
-			"target_percent":   s.config.Trading.TargetPercent,
-			"stoploss_percent": s.config.Trading.StopLossPercent,
-			"order_timeout":    s.config.Trading.OrderTimeout,
-			"max_positions":    s.config.Trading.MaxPositions,
-			"dry_run":          s.config.Trading.DryRun,
-			"signal_pattern":   s.config.Trading.SignalPattern,
-		},
+		"trading": tradingConfig,
 	}
 
 	s.respondJSON(w, http.StatusOK, safeConfig)
@@ -277,29 +351,47 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update config (this is simplified - in production, you'd want more validation)
-	// Note: This only updates in-memory config, not the file
+	// Update settings in database
 	if trading, ok := updates["trading"].(map[string]interface{}); ok {
 		if v, ok := trading["enabled"].(bool); ok {
 			s.config.Trading.Enabled = v
+			s.repo.SaveSetting("trading.enabled", fmt.Sprintf("%t", v))
 		}
 		if v, ok := trading["leverage"].(float64); ok {
 			s.config.Trading.Leverage = int(v)
+			s.repo.SaveSetting("trading.leverage", fmt.Sprintf("%d", int(v)))
 		}
 		if v, ok := trading["order_amount"].(float64); ok {
 			s.config.Trading.OrderAmount = v
+			s.repo.SaveSetting("trading.order_amount", fmt.Sprintf("%f", v))
 		}
 		if v, ok := trading["target_percent"].(float64); ok {
 			s.config.Trading.TargetPercent = v
+			s.repo.SaveSetting("trading.target_percent", fmt.Sprintf("%f", v))
 		}
 		if v, ok := trading["stoploss_percent"].(float64); ok {
 			s.config.Trading.StopLossPercent = v
+			s.repo.SaveSetting("trading.stoploss_percent", fmt.Sprintf("%f", v))
 		}
 		if v, ok := trading["dry_run"].(bool); ok {
 			s.config.Trading.DryRun = v
+			s.repo.SaveSetting("trading.dry_run", fmt.Sprintf("%t", v))
+		}
+		if v, ok := trading["max_positions"].(float64); ok {
+			s.config.Trading.MaxPositions = int(v)
+			s.repo.SaveSetting("trading.max_positions", fmt.Sprintf("%d", int(v)))
+		}
+		if v, ok := trading["order_timeout"].(float64); ok {
+			s.config.Trading.OrderTimeout = int(v)
+			s.repo.SaveSetting("trading.order_timeout", fmt.Sprintf("%d", int(v)))
+		}
+		if v, ok := trading["signal_pattern"].(string); ok {
+			s.config.Trading.SignalPattern = v
+			s.repo.SaveSetting("trading.signal_pattern", v)
 		}
 	}
 
+	s.logger.Info("Configuration saved to database")
 	s.respondJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
@@ -550,4 +642,39 @@ func (s *Server) respondJSON(w http.ResponseWriter, status int, data interface{}
 
 func (s *Server) respondError(w http.ResponseWriter, status int, message string) {
 	s.respondJSON(w, status, map[string]string{"error": message})
+}
+
+// Setting helper functions
+func (s *Server) getSettingString(settings map[string]string, key, defaultValue string) string {
+	if val, ok := settings[key]; ok {
+		return val
+	}
+	return defaultValue
+}
+
+func (s *Server) getSettingInt(settings map[string]string, key string, defaultValue int) int {
+	if val, ok := settings[key]; ok {
+		var result int
+		if _, err := fmt.Sscanf(val, "%d", &result); err == nil {
+			return result
+		}
+	}
+	return defaultValue
+}
+
+func (s *Server) getSettingFloat(settings map[string]string, key string, defaultValue float64) float64 {
+	if val, ok := settings[key]; ok {
+		var result float64
+		if _, err := fmt.Sscanf(val, "%f", &result); err == nil {
+			return result
+		}
+	}
+	return defaultValue
+}
+
+func (s *Server) getSettingBool(settings map[string]string, key string, defaultValue bool) bool {
+	if val, ok := settings[key]; ok {
+		return val == "true"
+	}
+	return defaultValue
 }

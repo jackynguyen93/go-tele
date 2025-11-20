@@ -24,7 +24,21 @@
       "Bash(docker images:*)",
       "WebFetch(domain:pkg.go.dev)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nFix Docker build: prevent .dockerignore from excluding cmd/tdclient directory\n\nChanged pattern from ''tdclient'' to ''/tdclient'' to only ignore the binary\nin the root directory, not the cmd/tdclient source directory. This was\ncausing ''stat /app/cmd/tdclient: directory not found'' errors during\nDocker builds.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(git push)",
+      "Bash(tar:*)",
+      "Bash(git restore:*)",
+      "Bash(git commit:*)",
+      "Bash(docker logs:*)",
+      "Bash(npm run build:*)",
+      "Bash(find:*)",
+      "Bash(docker exec:*)",
+      "Bash(sqlite3:*)",
+      "Bash(curl:*)",
+      "Bash(CGO_ENABLED=1 CGO_CFLAGS=\"-I/usr/local/tdlib-1.8.19/include -I/opt/homebrew/opt/openssl@3/include\" CGO_LDFLAGS=\"-L/usr/local/tdlib-1.8.19/lib -L/opt/homebrew/opt/openssl@3/lib -Wl,-rpath,/usr/local/tdlib-1.8.19/lib\" DYLD_LIBRARY_PATH=\"/usr/local/tdlib-1.8.19/lib:/opt/homebrew/opt/openssl@3/lib\" go build -o tdclient ./cmd/tdclient)",
+      "Bash(python3:*)"
     ],
     "deny": [],
     "ask": []

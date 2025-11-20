@@ -16,7 +16,6 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
-	"tdlib-go/internal/config"
 )
 
 const (
@@ -31,12 +30,12 @@ const (
 
 // Client represents a Binance Futures API client
 type Client struct {
-	apiKey    string
-	apiSecret string
-	baseURL   string
-	wsBaseURL string
+	apiKey     string
+	apiSecret  string
+	baseURL    string
+	wsBaseURL  string
 	httpClient *http.Client
-	logger    *logrus.Logger
+	logger     *logrus.Logger
 
 	// WebSocket
 	wsConn *websocket.Conn

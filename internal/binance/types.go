@@ -13,14 +13,27 @@ type ExchangeInfo struct {
 
 // SymbolInfo represents information about a trading symbol
 type SymbolInfo struct {
-	Symbol                string  `json:"symbol"`
-	Status                string  `json:"status"`
-	BaseAsset             string  `json:"baseAsset"`
-	QuoteAsset            string  `json:"quoteAsset"`
-	PricePrecision        int     `json:"pricePrecision"`
-	QuantityPrecision     int     `json:"quantityPrecision"`
-	BaseAssetPrecision    int     `json:"baseAssetPrecision"`
-	QuotePrecision        int     `json:"quotePrecision"`
+	Symbol                string       `json:"symbol"`
+	Status                string       `json:"status"`
+	BaseAsset             string       `json:"baseAsset"`
+	QuoteAsset            string       `json:"quoteAsset"`
+	PricePrecision        int          `json:"pricePrecision"`
+	QuantityPrecision     int          `json:"quantityPrecision"`
+	BaseAssetPrecision    int          `json:"baseAssetPrecision"`
+	QuotePrecision        int          `json:"quotePrecision"`
+	Filters               []FilterInfo `json:"filters"`
+}
+
+// FilterInfo represents a filter on a symbol
+type FilterInfo struct {
+	FilterType  string  `json:"filterType"`
+	MinPrice    string  `json:"minPrice,omitempty"`
+	MaxPrice    string  `json:"maxPrice,omitempty"`
+	TickSize    string  `json:"tickSize,omitempty"`
+	MinQty      string  `json:"minQty,omitempty"`
+	MaxQty      string  `json:"maxQty,omitempty"`
+	StepSize    string  `json:"stepSize,omitempty"`
+	MinNotional string  `json:"minNotional,omitempty"`
 }
 
 // PriceTicker represents a price ticker

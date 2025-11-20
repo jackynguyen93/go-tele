@@ -2,6 +2,7 @@ package trading
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	"tdlib-go/internal/binance"
@@ -13,13 +14,14 @@ import (
 
 // Engine is the main trading engine
 type Engine struct {
-	parser   *SignalParser
-	executor *OrderExecutor
-	binance  *binance.Client
-	repo     *storage.Repository
-	webapi   *webapi.Server
-	config   *config.Config
-	logger   *logrus.Logger
+	parser         *SignalParser
+	executor       *OrderExecutor
+	binance        *binance.Client
+	repo           *storage.Repository
+	webapi         *webapi.Server
+	config         *config.Config
+	logger         *logrus.Logger
+	binanceClients map[int64]*binance.Client // Added missing field
 }
 
 // NewEngine creates a new trading engine
@@ -72,35 +74,38 @@ func NewEngine(repo *storage.Repository, cfg *config.Config, logger *logrus.Logg
 		executor.accountID = defaultAccount.ID // Set account ID in executor
 	}
 
-	// Initialize web API
-	webServer := webapi.NewServer(repo, cfg, logger)
-
-	// Set up WebSocket callbacks for all clients
-	for accountID, client := range binanceClients {
-		accountID := accountID // capture variable
-		client.SetOrderUpdateCallback(func(update *binance.OrderUpdate) {
-			if executor != nil {
-				executor.HandleOrderUpdate(update)
-			}
-
-			// Broadcast to web clients
-			if webServer != nil {
-				// Convert and broadcast
-			}
-		})
-	}
-
 	engine := &Engine{
 		parser:         parser,
 		executor:       executor,
 		binanceClients: binanceClients,
 		repo:           repo,
-		webapi:         webServer,
+		webapi:         nil, // Will be set later via SetWebAPI
 		config:         cfg,
 		logger:         logger,
 	}
 
 	return engine, nil
+}
+
+// SetWebAPI sets the web API server for broadcasting updates
+func (e *Engine) SetWebAPI(webapi *webapi.Server) {
+	e.webapi = webapi
+
+	// Set up WebSocket callbacks for all clients (only if we have clients)
+	if e.binanceClients != nil {
+		for _, client := range e.binanceClients {
+			client.SetOrderUpdateCallback(func(update *binance.OrderUpdate) {
+				if e.executor != nil {
+					e.executor.HandleOrderUpdate(update)
+				}
+
+				// Broadcast to web clients
+				if e.webapi != nil {
+					// Convert and broadcast
+				}
+			})
+		}
+	}
 }
 
 // Start starts the trading engine
@@ -129,15 +134,6 @@ func (e *Engine) Start() error {
 	}
 
 	e.logger.Info("Trading engine started successfully")
-
-	// Start web API server
-	if e.config.WebAPI.Enabled {
-		go func() {
-			if err := e.webapi.Start(); err != nil {
-				e.logger.Errorf("Web API server error: %v", err)
-			}
-		}()
-	}
 
 	return nil
 }
@@ -182,7 +178,7 @@ func (e *Engine) ProcessMessage(msg *models.Message) error {
 		e.logger.Errorf("Failed to execute signal: %v", err)
 
 		// Update signal status to failed
-		now := logrus.Now()
+		now := time.Now()
 		e.repo.UpdateSignalStatus(signal.ID, "failed", &now, err.Error())
 
 		// Broadcast error to web clients
@@ -198,7 +194,7 @@ func (e *Engine) ProcessMessage(msg *models.Message) error {
 	}
 
 	// Update signal status to processed
-	now := logrus.Now()
+	now := time.Now()
 	e.repo.UpdateSignalStatus(signal.ID, "processed", &now, "")
 
 	// Broadcast to web clients

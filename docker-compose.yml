@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile.fast
       # Use BuildKit for better caching
       args:
-        BUILDKIT_INLINE_CACHE: 1
+        BUILDKIT_INLINE_CACHE: 0
     image: tdclient:latest
     container_name: telegram-trading-bot
     # Remove restart policy for interactive authentication

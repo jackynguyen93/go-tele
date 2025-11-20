@@ -16,6 +16,7 @@ import (
 	"tdlib-go/internal/storage"
 	"tdlib-go/internal/telegram"
 	"tdlib-go/internal/trading"
+	"tdlib-go/internal/webapi"
 )
 
 var (
@@ -61,6 +62,15 @@ func main() {
 
 	logger.Info("Database initialized successfully")
 
+	// Load settings from database and override config
+	dbSettings, err := repo.GetAllSettings()
+	if err != nil {
+		logger.Warnf("Failed to load settings from database: %v", err)
+	} else if len(dbSettings) > 0 {
+		cfg.LoadSettingsFromMap(dbSettings)
+		logger.Info("Settings loaded from database")
+	}
+
 	// Initialize Telegram client
 	client, err := telegram.NewClient(cfg, logger)
 	if err != nil {
@@ -81,6 +91,13 @@ func main() {
 		logger.Fatalf("Failed to create trading engine: %v", err)
 	}
 
+	// Initialize and start web API server
+	webServer := webapi.NewServer(repo, cfg, logger)
+	webServer.SetMonitor(monitor)
+
+	// Connect trading engine to web server
+	tradingEngine.SetWebAPI(webServer)
+
 	// Set message callback for trading
 	monitor.SetMessageCallback(tradingEngine.ProcessMessage)
 
@@ -93,6 +110,17 @@ func main() {
 	if err := monitor.Start(); err != nil {
 		logger.Fatalf("Failed to start monitor: %v", err)
 	}
+
+	// Start web server in goroutine
+	go func() {
+		logger.Info("Launching web server goroutine...")
+		if err := webServer.Start(); err != nil {
+			logger.Fatalf("Web server failed to start: %v", err)
+		}
+	}()
+
+	// Give web server time to start
+	time.Sleep(1 * time.Second)
 
 	// Set up graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -128,6 +156,11 @@ func main() {
 
 	// Graceful shutdown
 	logger.Info("Initiating graceful shutdown...")
+
+	// Stop web server
+	if err := webServer.Stop(); err != nil {
+		logger.Errorf("Error stopping web server: %v", err)
+	}
 
 	// Stop trading engine
 	if err := tradingEngine.Stop(); err != nil {

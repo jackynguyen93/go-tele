@@ -171,6 +171,15 @@ func (r *Repository) createSchemaInline() error {
 	CREATE INDEX IF NOT EXISTS idx_orders_binance_order_id ON orders(binance_order_id);
 	CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 	CREATE INDEX IF NOT EXISTS idx_orders_order_purpose ON orders(order_purpose);
+
+	CREATE TABLE IF NOT EXISTS settings (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		key TEXT NOT NULL UNIQUE,
+		value TEXT NOT NULL,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_settings_key ON settings(key);
 	`
 
 	if _, err := r.db.Exec(schema); err != nil {
@@ -972,4 +981,60 @@ func (r *Repository) GetTradingStats() (*models.TradingStats, error) {
 	}
 
 	return stats, nil
+}
+
+// SaveSetting saves or updates a setting
+func (r *Repository) SaveSetting(key, value string) error {
+	query := `
+		INSERT INTO settings (key, value, updated_at)
+		VALUES (?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(key) DO UPDATE SET
+			value = excluded.value,
+			updated_at = CURRENT_TIMESTAMP
+	`
+
+	_, err := r.db.Exec(query, key, value)
+	if err != nil {
+		return fmt.Errorf("failed to save setting: %w", err)
+	}
+
+	return nil
+}
+
+// GetSetting retrieves a setting value by key
+func (r *Repository) GetSetting(key string) (string, error) {
+	var value string
+	query := `SELECT value FROM settings WHERE key = ?`
+
+	err := r.db.QueryRow(query, key).Scan(&value)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("setting not found: %s", key)
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to get setting: %w", err)
+	}
+
+	return value, nil
+}
+
+// GetAllSettings retrieves all settings as a map
+func (r *Repository) GetAllSettings() (map[string]string, error) {
+	query := `SELECT key, value FROM settings`
+
+	rows, err := r.db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query settings: %w", err)
+	}
+	defer rows.Close()
+
+	settings := make(map[string]string)
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			return nil, fmt.Errorf("failed to scan setting: %w", err)
+		}
+		settings[key] = value
+	}
+
+	return settings, nil
 }

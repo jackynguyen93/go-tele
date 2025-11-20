@@ -24,6 +24,12 @@
           </router-link>
         </li>
         <li>
+          <router-link to="/channels" class="nav-link">
+            <span class="icon">📢</span>
+            <span>Channels</span>
+          </router-link>
+        </li>
+        <li>
           <router-link to="/settings" class="nav-link">
             <span class="icon">⚙️</span>
             <span>Settings</span>

@@ -147,3 +147,66 @@ func (c *Config) Validate() error {
 func (c *Config) IsBot() bool {
 	return c.Telegram.BotToken != ""
 }
+
+// Save writes the configuration to a file
+func (c *Config) Save(path string) error {
+	data, err := yaml.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	return nil
+}
+
+// LoadSettingsFromMap loads settings from a map and overrides the config
+func (c *Config) LoadSettingsFromMap(settings map[string]string) {
+	if val, ok := settings["trading.enabled"]; ok {
+		c.Trading.Enabled = val == "true"
+	}
+	if val, ok := settings["trading.leverage"]; ok {
+		var v int
+		if _, err := fmt.Sscanf(val, "%d", &v); err == nil {
+			c.Trading.Leverage = v
+		}
+	}
+	if val, ok := settings["trading.order_amount"]; ok {
+		var v float64
+		if _, err := fmt.Sscanf(val, "%f", &v); err == nil {
+			c.Trading.OrderAmount = v
+		}
+	}
+	if val, ok := settings["trading.target_percent"]; ok {
+		var v float64
+		if _, err := fmt.Sscanf(val, "%f", &v); err == nil {
+			c.Trading.TargetPercent = v
+		}
+	}
+	if val, ok := settings["trading.stoploss_percent"]; ok {
+		var v float64
+		if _, err := fmt.Sscanf(val, "%f", &v); err == nil {
+			c.Trading.StopLossPercent = v
+		}
+	}
+	if val, ok := settings["trading.dry_run"]; ok {
+		c.Trading.DryRun = val == "true"
+	}
+	if val, ok := settings["trading.max_positions"]; ok {
+		var v int
+		if _, err := fmt.Sscanf(val, "%d", &v); err == nil {
+			c.Trading.MaxPositions = v
+		}
+	}
+	if val, ok := settings["trading.order_timeout"]; ok {
+		var v int
+		if _, err := fmt.Sscanf(val, "%d", &v); err == nil {
+			c.Trading.OrderTimeout = v
+		}
+	}
+	if val, ok := settings["trading.signal_pattern"]; ok {
+		c.Trading.SignalPattern = val
+	}
+}
