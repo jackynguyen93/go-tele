@@ -98,8 +98,10 @@ func (c *Client) doRequest(method, endpoint string, params url.Values, signed bo
 	}
 
 	reqURL := c.baseURL + endpoint
-	if method == http.MethodGet && len(params) > 0 {
-		reqURL += "?" + params.Encode()
+	if method == http.MethodGet || method == http.MethodDelete {
+		if len(params) > 0 {
+			reqURL += "?" + params.Encode()
+		}
 	}
 
 	var reqBody io.Reader
@@ -429,7 +431,7 @@ func (c *Client) handleWebSocketMessage(message []byte) {
 	}
 
 	if err := json.Unmarshal(message, &baseMsg); err != nil {
-		c.logger.Errorf("Failed to unmarshal WebSocket message: %v", err)
+		// Silently ignore unmarshal errors (likely heartbeat or unknown message types)
 		return
 	}
 

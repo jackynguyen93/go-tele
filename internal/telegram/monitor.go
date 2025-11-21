@@ -5,7 +5,6 @@ import (
 	"sync"
 
 	"github.com/sirupsen/logrus"
-	"github.com/zelenin/go-tdlib/client"
 	"tdlib-go/internal/config"
 	"tdlib-go/internal/storage"
 	"tdlib-go/pkg/models"
@@ -109,22 +108,9 @@ func (m *Monitor) FetchHistory(channelID int64, limit int32) error {
 		return fmt.Errorf("failed to fetch history: %w", err)
 	}
 
-	m.logger.Infof("Fetched %d messages from channel %d", len(messages), channelID)
+	m.logger.Infof("Fetched %d messages from channel %d (skipping history save)", len(messages), channelID)
 
-	// Get chat info
-	chat, err := m.client.tdClient.GetChat(&client.GetChatRequest{ChatId: channelID})
-	if err != nil {
-		return fmt.Errorf("failed to get chat info: %w", err)
-	}
-
-	// Process and save messages
-	for _, msg := range messages {
-		modelMsg := m.client.convertMessage(msg, chat)
-		if err := m.repo.SaveMessage(modelMsg); err != nil {
-			m.logger.Errorf("Failed to save historical message: %v", err)
-		}
-	}
-
+	// Skip saving message history - we only need real-time processing
 	return nil
 }
 
@@ -194,13 +180,7 @@ func (m *Monitor) handleMessage(msg *models.Message) error {
 	}
 	fmt.Println("---")
 
-	// Save to database
-	if err := m.repo.SaveMessage(msg); err != nil {
-		m.logger.Errorf("Failed to save message: %v", err)
-		return fmt.Errorf("failed to save message: %w", err)
-	}
-
-	// Call message callback (for trading engine)
+	// Call message callback (for trading engine) - skip saving to database
 	if m.onMessage != nil {
 		if err := m.onMessage(msg); err != nil {
 			m.logger.Errorf("Message callback error: %v", err)

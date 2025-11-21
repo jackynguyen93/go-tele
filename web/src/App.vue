@@ -6,18 +6,6 @@
       </div>
       <ul class="nav-links">
         <li>
-          <router-link to="/" class="nav-link">
-            <span class="icon">📊</span>
-            <span>Dashboard</span>
-          </router-link>
-        </li>
-        <li>
-          <router-link to="/positions" class="nav-link">
-            <span class="icon">💼</span>
-            <span>Positions</span>
-          </router-link>
-        </li>
-        <li>
           <router-link to="/accounts" class="nav-link">
             <span class="icon">🔑</span>
             <span>Accounts</span>

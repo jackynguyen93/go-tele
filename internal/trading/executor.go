@@ -25,10 +25,6 @@ type OrderExecutor struct {
 	// Async logging channel
 	logQueue chan *LogEntry
 
-	// Active positions tracking
-	activePositions map[int64]*PositionTracker
-	positionsMu     sync.RWMutex
-
 	// Order timeout tracking
 	pendingOrders map[string]*OrderTimeout
 	ordersMu      sync.RWMutex
@@ -40,39 +36,25 @@ type LogEntry struct {
 	Data interface{}
 }
 
-// PositionTracker tracks an active position
-type PositionTracker struct {
-	PositionID      int64
-	Symbol          string
-	EntryOrderID    string
-	TPOrderID       string
-	SLOrderID       string
-	EntryFilled     bool
-	TPFilled        bool
-	SLFilled        bool
-	CreatedAt       time.Time
-}
-
 // OrderTimeout tracks pending orders for timeout
 type OrderTimeout struct {
-	OrderID     string
-	PositionID  int64
-	Symbol      string
-	OrderType   string
-	CreatedAt   time.Time
+	OrderID         string
+	Symbol          string
+	OrderType       string
+	Quantity        float64 // Position quantity for closing when timeout
+	CreatedAt       time.Time
 	TimeoutDuration time.Duration
 }
 
 // NewOrderExecutor creates a new order executor
 func NewOrderExecutor(binanceClient *binance.Client, repo *storage.Repository, cfg *config.Config, logger *logrus.Logger) *OrderExecutor {
 	executor := &OrderExecutor{
-		binanceClient:   binanceClient,
-		repo:            repo,
-		config:          cfg,
-		logger:          logger,
-		logQueue:        make(chan *LogEntry, 1000),
-		activePositions: make(map[int64]*PositionTracker),
-		pendingOrders:   make(map[string]*OrderTimeout),
+		binanceClient: binanceClient,
+		repo:          repo,
+		config:        cfg,
+		logger:        logger,
+		logQueue:      make(chan *LogEntry, 1000),
+		pendingOrders: make(map[string]*OrderTimeout),
 	}
 
 	// Start async logger
@@ -192,101 +174,7 @@ func (e *OrderExecutor) ExecuteSignal(signal *models.Signal) error {
 		"leverage":          leverage,
 	}).Info("Executing trading signal")
 
-	// Create position record FIRST (before orders)
-	position := &models.Position{
-		SignalID:        signal.ID,
-		AccountID:       e.accountID,
-		Symbol:          signal.Symbol,
-		Side:            "LONG",
-		EntryPrice:      entryPrice,
-		Quantity:        quantity,
-		Leverage:        leverage,
-		TakeProfitPrice: takeProfitPrice,
-		StopLossPrice:   stopLossPrice,
-		Status:          "open",
-		OpenedAt:        time.Now(),
-	}
-
-	// Save position to get ID
-	if err := e.repo.SavePosition(position); err != nil {
-		return fmt.Errorf("failed to save position: %w", err)
-	}
-
-	e.logger.Infof("Position created: ID=%d, Symbol=%s, Status=%s", position.ID, position.Symbol, position.Status)
-
-	// DRY RUN MODE: Create simulated orders without actually placing them
-	if e.config.Trading.DryRun {
-		e.logger.Warnf("DRY RUN: Simulating orders for %s (Position ID: %d)", signal.Symbol, position.ID)
-
-		// Create simulated entry order
-		entryOrder := &models.Order{
-			PositionID:      position.ID,
-			BinanceOrderID:  fmt.Sprintf("DRY_ENTRY_%d_%d", position.ID, time.Now().Unix()),
-			Symbol:          signal.Symbol,
-			Side:            "BUY",
-			Type:            "MARKET",
-			OrigQty:         quantity,
-			ExecutedQty:     quantity,
-			Price:           entryPrice,
-			Status:          "FILLED",
-			TimeInForce:     "GTC",
-			CreatedAt:       time.Now(),
-			UpdatedAt:       time.Now(),
-			OrderPurpose:    "entry",
-		}
-		now := time.Now()
-		entryOrder.FilledAt = &now
-		if err := e.repo.SaveOrder(entryOrder); err != nil {
-			e.logger.Errorf("Failed to save simulated entry order: %v", err)
-		}
-
-		// Create simulated take profit order
-		tpOrder := &models.Order{
-			PositionID:      position.ID,
-			BinanceOrderID:  fmt.Sprintf("DRY_TP_%d_%d", position.ID, time.Now().Unix()),
-			Symbol:          signal.Symbol,
-			Side:            "SELL",
-			Type:            "TAKE_PROFIT_MARKET",
-			OrigQty:         quantity,
-			ExecutedQty:     0,
-			Price:           takeProfitPrice,
-			StopPrice:       &takeProfitPrice,
-			Status:          "NEW",
-			TimeInForce:     "GTC",
-			CreatedAt:       time.Now(),
-			UpdatedAt:       time.Now(),
-			OrderPurpose:    "take_profit",
-		}
-		if err := e.repo.SaveOrder(tpOrder); err != nil {
-			e.logger.Errorf("Failed to save simulated TP order: %v", err)
-		}
-
-		// Create simulated stop loss order
-		slOrder := &models.Order{
-			PositionID:      position.ID,
-			BinanceOrderID:  fmt.Sprintf("DRY_SL_%d_%d", position.ID, time.Now().Unix()),
-			Symbol:          signal.Symbol,
-			Side:            "SELL",
-			Type:            "STOP_MARKET",
-			OrigQty:         quantity,
-			ExecutedQty:     0,
-			Price:           stopLossPrice,
-			StopPrice:       &stopLossPrice,
-			Status:          "NEW",
-			TimeInForce:     "GTC",
-			CreatedAt:       time.Now(),
-			UpdatedAt:       time.Now(),
-			OrderPurpose:    "stop_loss",
-		}
-		if err := e.repo.SaveOrder(slOrder); err != nil {
-			e.logger.Errorf("Failed to save simulated SL order: %v", err)
-		}
-
-		e.logger.Infof("DRY RUN: Created simulated position with 3 orders for %s", signal.Symbol)
-		return nil
-	}
-
-	// REAL MODE: Set leverage and margin type, then place actual orders
+	// Set leverage and margin type
 	if err := e.binanceClient.SetLeverage(signal.Symbol, leverage); err != nil {
 		return fmt.Errorf("failed to set leverage: %w", err)
 	}
@@ -375,42 +263,49 @@ func (e *OrderExecutor) ExecuteSignal(signal *models.Signal) error {
 		}
 	}
 
-	// Log orders asynchronously (non-blocking)
+	// Log order details
 	if entryResp != nil {
-		e.asyncLogOrder(position.ID, entryResp, "entry")
-	}
-	if tpResp != nil {
-		e.asyncLogOrder(position.ID, tpResp, "take_profit")
-		// Add to timeout tracker
-		e.addOrderTimeout(strconv.FormatInt(tpResp.OrderID, 10), position.ID, signal.Symbol, "take_profit")
-	}
-	if slResp != nil {
-		e.asyncLogOrder(position.ID, slResp, "stop_loss")
-		// Add to timeout tracker
-		e.addOrderTimeout(strconv.FormatInt(slResp.OrderID, 10), position.ID, signal.Symbol, "stop_loss")
+		e.logger.WithFields(logrus.Fields{
+			"order_id": entryResp.OrderID,
+			"symbol":   entryResp.Symbol,
+			"side":     entryResp.Side,
+			"type":     entryResp.Type,
+			"status":   entryResp.Status,
+			"qty":      entryResp.OrigQty,
+		}).Info("Entry order placed")
 	}
 
-	// Track position
-	tracker := &PositionTracker{
-		PositionID:   position.ID,
-		Symbol:       signal.Symbol,
-		EntryFilled:  entryResp.Status == "FILLED",
-		CreatedAt:    time.Now(),
-	}
+	// Track TP/SL orders for timeout cancellation
 	if tpResp != nil {
-		tracker.TPOrderID = strconv.FormatInt(tpResp.OrderID, 10)
-	}
-	if slResp != nil {
-		tracker.SLOrderID = strconv.FormatInt(slResp.OrderID, 10)
+		e.logger.WithFields(logrus.Fields{
+			"order_id":   tpResp.OrderID,
+			"symbol":     tpResp.Symbol,
+			"side":       tpResp.Side,
+			"type":       tpResp.Type,
+			"status":     tpResp.Status,
+			"stop_price": tpResp.StopPrice,
+		}).Info("Take profit order placed")
+
+		// Add to timeout tracker with quantity for position closing
+		e.addOrderTimeout(strconv.FormatInt(tpResp.OrderID, 10), signal.Symbol, "take_profit", quantity)
 	}
 
-	e.positionsMu.Lock()
-	e.activePositions[position.ID] = tracker
-	e.positionsMu.Unlock()
+	if slResp != nil {
+		e.logger.WithFields(logrus.Fields{
+			"order_id":   slResp.OrderID,
+			"symbol":     slResp.Symbol,
+			"side":       slResp.Side,
+			"type":       slResp.Type,
+			"status":     slResp.Status,
+			"stop_price": slResp.StopPrice,
+		}).Info("Stop loss order placed")
+
+		// Add to timeout tracker with quantity for position closing
+		e.addOrderTimeout(strconv.FormatInt(slResp.OrderID, 10), signal.Symbol, "stop_loss", quantity)
+	}
 
 	e.logger.WithFields(logrus.Fields{
-		"position_id": position.ID,
-		"symbol":      signal.Symbol,
+		"symbol": signal.Symbol,
 		"entry_status": entryResp.Status,
 	}).Info("Signal executed successfully")
 
@@ -468,12 +363,12 @@ func (e *OrderExecutor) runAsyncLogger() {
 
 
 // addOrderTimeout adds an order to the timeout tracker
-func (e *OrderExecutor) addOrderTimeout(orderID string, positionID int64, symbol string, orderType string) {
+func (e *OrderExecutor) addOrderTimeout(orderID string, symbol string, orderType string, quantity float64) {
 	timeout := &OrderTimeout{
 		OrderID:         orderID,
-		PositionID:      positionID,
 		Symbol:          symbol,
 		OrderType:       orderType,
+		Quantity:        quantity,
 		CreatedAt:       time.Now(),
 		TimeoutDuration: time.Duration(e.config.Trading.OrderTimeout) * time.Second,
 	}
@@ -488,6 +383,9 @@ func (e *OrderExecutor) monitorOrderTimeouts() {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
+	// Track which positions we've already closed to avoid duplicate closes
+	closedPositions := make(map[string]bool)
+
 	for range ticker.C {
 		e.ordersMu.Lock()
 		for orderID, timeout := range e.pendingOrders {
@@ -499,9 +397,28 @@ func (e *OrderExecutor) monitorOrderTimeouts() {
 				_, err := e.binanceClient.CancelOrder(timeout.Symbol, binanceOrderID)
 				if err != nil {
 					e.logger.Errorf("Failed to cancel timed-out order %s: %v", orderID, err)
-				} else {
-					// Update order status asynchronously
-					go e.repo.UpdateOrderStatus(orderID, "CANCELED", 0)
+				}
+
+				// Close the position if not already closed
+				positionKey := timeout.Symbol
+				if !closedPositions[positionKey] {
+					e.logger.Infof("Closing open position for %s due to timeout", timeout.Symbol)
+
+					// Place market sell order to close position
+					_, err := e.binanceClient.PlaceOrder(&binance.NewOrder{
+						Symbol:     timeout.Symbol,
+						Side:       "SELL",
+						Type:       "MARKET",
+						Quantity:   timeout.Quantity,
+						ReduceOnly: true,
+					})
+
+					if err != nil {
+						e.logger.Errorf("Failed to close position for %s: %v", timeout.Symbol, err)
+					} else {
+						e.logger.Infof("Successfully closed position for %s (qty: %.8f)", timeout.Symbol, timeout.Quantity)
+						closedPositions[positionKey] = true
+					}
 				}
 
 				// Remove from pending
@@ -523,61 +440,15 @@ func (e *OrderExecutor) HandleOrderUpdate(update *binance.OrderUpdate) {
 		"type":     update.Order.ExecutionType,
 	}).Info("Order update received")
 
-	// Update order status asynchronously
-	executedQty, _ := strconv.ParseFloat(update.Order.FilledQty, 64)
-	go e.repo.UpdateOrderStatus(orderID, update.Order.OrderStatus, executedQty)
-
-	// Remove from pending if filled or canceled
+	// Remove from pending timeout tracker if filled or canceled
 	if update.Order.OrderStatus == "FILLED" || update.Order.OrderStatus == "CANCELED" || update.Order.OrderStatus == "EXPIRED" {
 		e.ordersMu.Lock()
-		timeout, exists := e.pendingOrders[orderID]
-		if exists {
+		if _, exists := e.pendingOrders[orderID]; exists {
 			delete(e.pendingOrders, orderID)
-
-			// Update position tracker
-			e.positionsMu.Lock()
-			if tracker, ok := e.activePositions[timeout.PositionID]; ok {
-				if timeout.OrderType == "take_profit" {
-					tracker.TPFilled = (update.Order.OrderStatus == "FILLED")
-					if tracker.TPFilled {
-						// Close position
-						realizedProfit, _ := strconv.ParseFloat(update.Order.RealizedProfit, 64)
-						avgPrice, _ := strconv.ParseFloat(update.Order.AvgPrice, 64)
-						go e.closePosition(timeout.PositionID, avgPrice, realizedProfit)
-					}
-				} else if timeout.OrderType == "stop_loss" {
-					tracker.SLFilled = (update.Order.OrderStatus == "FILLED")
-					if tracker.SLFilled {
-						// Close position
-						realizedProfit, _ := strconv.ParseFloat(update.Order.RealizedProfit, 64)
-						avgPrice, _ := strconv.ParseFloat(update.Order.AvgPrice, 64)
-						go e.closePosition(timeout.PositionID, avgPrice, realizedProfit)
-					}
-				}
-			}
-			e.positionsMu.Unlock()
+			e.logger.Infof("Removed order %s from timeout tracker (status: %s)", orderID, update.Order.OrderStatus)
 		}
 		e.ordersMu.Unlock()
 	}
-}
-
-// closePosition closes a position
-func (e *OrderExecutor) closePosition(positionID int64, exitPrice float64, realizedPnL float64) {
-	if err := e.repo.ClosePosition(positionID, exitPrice, time.Now()); err != nil {
-		e.logger.Errorf("Failed to close position %d: %v", positionID, err)
-		return
-	}
-
-	// Remove from active positions
-	e.positionsMu.Lock()
-	delete(e.activePositions, positionID)
-	e.positionsMu.Unlock()
-
-	e.logger.WithFields(logrus.Fields{
-		"position_id": positionID,
-		"exit_price":  exitPrice,
-		"pnl":         realizedPnL,
-	}).Info("Position closed")
 }
 
 // Close shuts down the executor

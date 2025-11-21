@@ -2,7 +2,6 @@ package trading
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/sirupsen/logrus"
 	"tdlib-go/internal/binance"
@@ -90,22 +89,6 @@ func NewEngine(repo *storage.Repository, cfg *config.Config, logger *logrus.Logg
 // SetWebAPI sets the web API server for broadcasting updates
 func (e *Engine) SetWebAPI(webapi *webapi.Server) {
 	e.webapi = webapi
-
-	// Set up WebSocket callbacks for all clients (only if we have clients)
-	if e.binanceClients != nil {
-		for _, client := range e.binanceClients {
-			client.SetOrderUpdateCallback(func(update *binance.OrderUpdate) {
-				if e.executor != nil {
-					e.executor.HandleOrderUpdate(update)
-				}
-
-				// Broadcast to web clients
-				if e.webapi != nil {
-					// Convert and broadcast
-				}
-			})
-		}
-	}
 }
 
 // Start starts the trading engine
@@ -116,23 +99,6 @@ func (e *Engine) Start() error {
 	}
 
 	e.logger.Info("Starting trading engine...")
-
-	// Start Binance user data streams for all accounts
-	for accountID, client := range e.binanceClients {
-		listenKey, err := client.StartUserDataStream()
-		if err != nil {
-			e.logger.Errorf("Failed to start user data stream for account %d: %v", accountID, err)
-			continue
-		}
-
-		if err := client.ConnectUserDataStream(listenKey); err != nil {
-			e.logger.Errorf("Failed to connect to user data stream for account %d: %v", accountID, err)
-			continue
-		}
-
-		e.logger.Infof("Started user data stream for account ID: %d", accountID)
-	}
-
 	e.logger.Info("Trading engine started successfully")
 
 	return nil
@@ -162,44 +128,21 @@ func (e *Engine) ProcessMessage(msg *models.Message) error {
 		return nil
 	}
 
-	// Save signal to database
-	if err := e.repo.SaveSignal(signal); err != nil {
-		e.logger.Errorf("Failed to save signal: %v", err)
+	e.logger.WithFields(logrus.Fields{
+		"symbol": signal.Symbol,
+	}).Info("New trading signal detected")
+
+	// Check if executor is available
+	if e.executor == nil {
+		err := fmt.Errorf("no executor available: please configure a default Binance account")
+		e.logger.Error(err.Error())
 		return err
 	}
 
-	e.logger.WithFields(logrus.Fields{
-		"signal_id": signal.ID,
-		"symbol":    signal.Symbol,
-	}).Info("New trading signal saved")
-
-	// Execute the signal
+	// Execute the signal directly - no database saving
 	if err := e.executor.ExecuteSignal(signal); err != nil {
 		e.logger.Errorf("Failed to execute signal: %v", err)
-
-		// Update signal status to failed
-		now := time.Now()
-		e.repo.UpdateSignalStatus(signal.ID, "failed", &now, err.Error())
-
-		// Broadcast error to web clients
-		if e.webapi != nil {
-			e.webapi.BroadcastUpdate("signal_error", map[string]interface{}{
-				"signal_id": signal.ID,
-				"symbol":    signal.Symbol,
-				"error":     err.Error(),
-			})
-		}
-
 		return err
-	}
-
-	// Update signal status to processed
-	now := time.Now()
-	e.repo.UpdateSignalStatus(signal.ID, "processed", &now, "")
-
-	// Broadcast to web clients
-	if e.webapi != nil {
-		e.webapi.BroadcastUpdate("signal_executed", signal)
 	}
 
 	return nil

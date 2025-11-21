@@ -12,13 +12,6 @@
         </label>
       </div>
 
-      <div class="form-group">
-        <label>
-          <input type="checkbox" v-model="config.dry_run" @change="saveConfig">
-          Dry Run Mode (no real orders)
-        </label>
-      </div>
-
       <div class="form-row">
         <div class="form-group">
           <label>Leverage</label>
@@ -68,16 +61,6 @@
       </div>
 
       <div class="form-group">
-        <label>Max Concurrent Positions</label>
-        <input
-          type="number"
-          v-model.number="config.max_positions"
-          @blur="saveConfig"
-          min="1"
-        >
-      </div>
-
-      <div class="form-group">
         <label>Order Timeout (seconds)</label>
         <input
           type="number"
@@ -117,9 +100,7 @@ export default {
         order_amount: 100,
         target_percent: 0.02,
         stoploss_percent: 0.01,
-        max_positions: 3,
-        order_timeout: 3600,
-        dry_run: true,
+        order_timeout: 600,
         signal_pattern: ''
       },
       saveMessage: ''
