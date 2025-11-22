@@ -461,6 +461,23 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 	account.CreatedAt = time.Now()
 	account.UpdatedAt = time.Now()
 
+	// Set trading config defaults if not provided
+	if account.Leverage == 0 {
+		account.Leverage = 10
+	}
+	if account.OrderAmount == 0 {
+		account.OrderAmount = 100
+	}
+	if account.TargetPercent == 0 {
+		account.TargetPercent = 0.02
+	}
+	if account.StopLossPercent == 0 {
+		account.StopLossPercent = 0.01
+	}
+	if account.OrderTimeout == 0 {
+		account.OrderTimeout = 600
+	}
+
 	if err := s.repo.SaveAccount(&account); err != nil {
 		s.respondError(w, http.StatusInternalServerError, "Failed to create account")
 		return

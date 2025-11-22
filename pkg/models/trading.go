@@ -4,15 +4,20 @@ import "time"
 
 // BinanceAccount represents a Binance account configuration
 type BinanceAccount struct {
-	ID        int64     `db:"id" json:"id"`
-	Name      string    `db:"name" json:"name"`                 // Friendly name for the account
-	APIKey    string    `db:"api_key" json:"api_key"`           // Encrypted in production
-	APISecret string    `db:"api_secret" json:"api_secret"`     // Encrypted in production
-	IsTestnet bool      `db:"is_testnet" json:"is_testnet"`
-	IsActive  bool      `db:"is_active" json:"is_active"`
-	IsDefault bool      `db:"is_default" json:"is_default"`     // Default account for new trades
-	CreatedAt time.Time `db:"created_at" json:"created_at"`
-	UpdatedAt time.Time `db:"updated_at" json:"updated_at"`
+	ID              int64     `db:"id" json:"id"`
+	Name            string    `db:"name" json:"name"`                         // Friendly name for the account
+	APIKey          string    `db:"api_key" json:"api_key"`                   // Encrypted in production
+	APISecret       string    `db:"api_secret" json:"api_secret"`             // Encrypted in production
+	IsTestnet       bool      `db:"is_testnet" json:"is_testnet"`
+	IsActive        bool      `db:"is_active" json:"is_active"`
+	IsDefault       bool      `db:"is_default" json:"is_default"`             // Default account for new trades
+	Leverage        int       `db:"leverage" json:"leverage"`                 // Trading leverage (1-125)
+	OrderAmount     float64   `db:"order_amount" json:"order_amount"`         // Order size in USDT
+	TargetPercent   float64   `db:"target_percent" json:"target_percent"`     // Take profit %
+	StopLossPercent float64   `db:"stoploss_percent" json:"stoploss_percent"` // Stop loss %
+	OrderTimeout    int       `db:"order_timeout" json:"order_timeout"`       // Timeout in seconds
+	CreatedAt       time.Time `db:"created_at" json:"created_at"`
+	UpdatedAt       time.Time `db:"updated_at" json:"updated_at"`
 }
 
 // Signal represents a parsed trading signal from Telegram

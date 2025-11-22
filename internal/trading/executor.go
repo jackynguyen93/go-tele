@@ -28,6 +28,10 @@ type OrderExecutor struct {
 	// Order timeout tracking
 	pendingOrders map[string]*OrderTimeout
 	ordersMu      sync.RWMutex
+
+	// Recent signal tracking (prevent duplicates within 48h)
+	recentSignals map[string]time.Time
+	signalsMu     sync.RWMutex
 }
 
 // LogEntry represents an entry to be logged asynchronously
@@ -55,6 +59,7 @@ func NewOrderExecutor(binanceClient *binance.Client, repo *storage.Repository, c
 		logger:        logger,
 		logQueue:      make(chan *LogEntry, 1000),
 		pendingOrders: make(map[string]*OrderTimeout),
+		recentSignals: make(map[string]time.Time),
 	}
 
 	// Start async logger
@@ -63,11 +68,28 @@ func NewOrderExecutor(binanceClient *binance.Client, repo *storage.Repository, c
 	// Start order timeout monitor
 	go executor.monitorOrderTimeouts()
 
+	// Start signal cleanup monitor (remove signals older than 48h)
+	go executor.cleanupOldSignals()
+
 	return executor
 }
 
-// ExecuteSignal executes a trading signal
-func (e *OrderExecutor) ExecuteSignal(signal *models.Signal) error {
+// ExecuteSignal executes a trading signal with account-specific configuration
+func (e *OrderExecutor) ExecuteSignal(signal *models.Signal, account *models.BinanceAccount) error {
+	// Check if we've recently executed this signal (within 48 hours)
+	e.signalsMu.RLock()
+	lastExecuted, exists := e.recentSignals[signal.Symbol]
+	e.signalsMu.RUnlock()
+
+	if exists {
+		timeSince := time.Since(lastExecuted)
+		if timeSince < 48*time.Hour {
+			e.logger.Warnf("Skipping duplicate signal for %s (last executed %v ago, cooldown: 48h)",
+				signal.Symbol, timeSince.Round(time.Minute))
+			return nil
+		}
+	}
+
 	// Get current price
 	ticker, err := e.binanceClient.GetSymbolPriceTicker(signal.Symbol)
 	if err != nil {
@@ -79,15 +101,16 @@ func (e *OrderExecutor) ExecuteSignal(signal *models.Signal) error {
 		return fmt.Errorf("failed to parse price: %w", err)
 	}
 
-	// Calculate order parameters
-	leverage := e.config.Trading.Leverage
-	orderAmount := e.config.Trading.OrderAmount
-	targetPercent := e.config.Trading.TargetPercent
-	stopLossPercent := e.config.Trading.StopLossPercent
+	// Use account-specific configuration
+	leverage := account.Leverage
+	orderAmount := account.OrderAmount
+	targetPercent := account.TargetPercent
+	stopLossPercent := account.StopLossPercent
 
-	// Calculate prices
-	takeProfitPrice := entryPrice * (1 + targetPercent*float64(leverage))
-	stopLossPrice := entryPrice * (1 - stopLossPercent*float64(leverage))
+	// Calculate prices (divide by leverage since price movement is amplified)
+	// e.g., 20% target with 10x leverage = 2% price change needed
+	takeProfitPrice := entryPrice * (1 + targetPercent/float64(leverage))
+	stopLossPrice := entryPrice * (1 - stopLossPercent/float64(leverage))
 
 	// Calculate quantity based on order amount
 	quantity := orderAmount / entryPrice
@@ -287,7 +310,7 @@ func (e *OrderExecutor) ExecuteSignal(signal *models.Signal) error {
 		}).Info("Take profit order placed")
 
 		// Add to timeout tracker with quantity for position closing
-		e.addOrderTimeout(strconv.FormatInt(tpResp.OrderID, 10), signal.Symbol, "take_profit", quantity)
+		e.addOrderTimeout(strconv.FormatInt(tpResp.OrderID, 10), signal.Symbol, "take_profit", quantity, account.OrderTimeout)
 	}
 
 	if slResp != nil {
@@ -301,13 +324,18 @@ func (e *OrderExecutor) ExecuteSignal(signal *models.Signal) error {
 		}).Info("Stop loss order placed")
 
 		// Add to timeout tracker with quantity for position closing
-		e.addOrderTimeout(strconv.FormatInt(slResp.OrderID, 10), signal.Symbol, "stop_loss", quantity)
+		e.addOrderTimeout(strconv.FormatInt(slResp.OrderID, 10), signal.Symbol, "stop_loss", quantity, account.OrderTimeout)
 	}
 
 	e.logger.WithFields(logrus.Fields{
 		"symbol": signal.Symbol,
 		"entry_status": entryResp.Status,
 	}).Info("Signal executed successfully")
+
+	// Record this signal to prevent duplicates within 48 hours
+	e.signalsMu.Lock()
+	e.recentSignals[signal.Symbol] = time.Now()
+	e.signalsMu.Unlock()
 
 	return nil
 }
@@ -363,14 +391,14 @@ func (e *OrderExecutor) runAsyncLogger() {
 
 
 // addOrderTimeout adds an order to the timeout tracker
-func (e *OrderExecutor) addOrderTimeout(orderID string, symbol string, orderType string, quantity float64) {
+func (e *OrderExecutor) addOrderTimeout(orderID string, symbol string, orderType string, quantity float64, timeoutSeconds int) {
 	timeout := &OrderTimeout{
 		OrderID:         orderID,
 		Symbol:          symbol,
 		OrderType:       orderType,
 		Quantity:        quantity,
 		CreatedAt:       time.Now(),
-		TimeoutDuration: time.Duration(e.config.Trading.OrderTimeout) * time.Second,
+		TimeoutDuration: time.Duration(timeoutSeconds) * time.Second,
 	}
 
 	e.ordersMu.Lock()
@@ -426,6 +454,24 @@ func (e *OrderExecutor) monitorOrderTimeouts() {
 			}
 		}
 		e.ordersMu.Unlock()
+	}
+}
+
+// cleanupOldSignals removes signals older than 48 hours from tracking
+func (e *OrderExecutor) cleanupOldSignals() {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		e.signalsMu.Lock()
+		now := time.Now()
+		for symbol, executedAt := range e.recentSignals {
+			if now.Sub(executedAt) > 48*time.Hour {
+				delete(e.recentSignals, symbol)
+				e.logger.Debugf("Removed old signal tracking for %s (executed %v ago)", symbol, now.Sub(executedAt).Round(time.Hour))
+			}
+		}
+		e.signalsMu.Unlock()
 	}
 }
 

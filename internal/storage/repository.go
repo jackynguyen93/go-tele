@@ -64,6 +64,11 @@ func (r *Repository) createSchemaInline() error {
 		is_testnet BOOLEAN DEFAULT 0,
 		is_active BOOLEAN DEFAULT 1,
 		is_default BOOLEAN DEFAULT 0,
+		leverage INTEGER DEFAULT 10,
+		order_amount REAL DEFAULT 100,
+		target_percent REAL DEFAULT 0.02,
+		stoploss_percent REAL DEFAULT 0.01,
+		order_timeout INTEGER DEFAULT 600,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
@@ -380,8 +385,9 @@ func GetDatabasePath(dsn string) (string, error) {
 // SaveAccount saves a Binance account to the database
 func (r *Repository) SaveAccount(account *models.BinanceAccount) error {
 	query := `
-		INSERT INTO binance_accounts (name, api_key, api_secret, is_testnet, is_active, is_default)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO binance_accounts (name, api_key, api_secret, is_testnet, is_active, is_default,
+			leverage, order_amount, target_percent, stoploss_percent, order_timeout)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	result, err := r.db.Exec(query,
 		account.Name,
@@ -390,6 +396,11 @@ func (r *Repository) SaveAccount(account *models.BinanceAccount) error {
 		account.IsTestnet,
 		account.IsActive,
 		account.IsDefault,
+		account.Leverage,
+		account.OrderAmount,
+		account.TargetPercent,
+		account.StopLossPercent,
+		account.OrderTimeout,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to save account: %w", err)
@@ -416,7 +427,9 @@ func (r *Repository) SaveAccount(account *models.BinanceAccount) error {
 func (r *Repository) UpdateAccount(account *models.BinanceAccount) error {
 	query := `
 		UPDATE binance_accounts
-		SET name = ?, api_key = ?, api_secret = ?, is_testnet = ?, is_active = ?, is_default = ?, updated_at = ?
+		SET name = ?, api_key = ?, api_secret = ?, is_testnet = ?, is_active = ?, is_default = ?,
+			leverage = ?, order_amount = ?, target_percent = ?, stoploss_percent = ?, order_timeout = ?,
+			updated_at = ?
 		WHERE id = ?
 	`
 	_, err := r.db.Exec(query,
@@ -426,6 +439,11 @@ func (r *Repository) UpdateAccount(account *models.BinanceAccount) error {
 		account.IsTestnet,
 		account.IsActive,
 		account.IsDefault,
+		account.Leverage,
+		account.OrderAmount,
+		account.TargetPercent,
+		account.StopLossPercent,
+		account.OrderTimeout,
 		time.Now(),
 		account.ID,
 	)
@@ -447,7 +465,9 @@ func (r *Repository) UpdateAccount(account *models.BinanceAccount) error {
 // GetAccount retrieves an account by ID
 func (r *Repository) GetAccount(id int64) (*models.BinanceAccount, error) {
 	query := `
-		SELECT id, name, api_key, api_secret, is_testnet, is_active, is_default, created_at, updated_at
+		SELECT id, name, api_key, api_secret, is_testnet, is_active, is_default,
+			leverage, order_amount, target_percent, stoploss_percent, order_timeout,
+			created_at, updated_at
 		FROM binance_accounts
 		WHERE id = ?
 	`
@@ -460,6 +480,11 @@ func (r *Repository) GetAccount(id int64) (*models.BinanceAccount, error) {
 		&account.IsTestnet,
 		&account.IsActive,
 		&account.IsDefault,
+		&account.Leverage,
+		&account.OrderAmount,
+		&account.TargetPercent,
+		&account.StopLossPercent,
+		&account.OrderTimeout,
 		&account.CreatedAt,
 		&account.UpdatedAt,
 	)
@@ -475,7 +500,9 @@ func (r *Repository) GetAccount(id int64) (*models.BinanceAccount, error) {
 // GetAllAccounts retrieves all Binance accounts
 func (r *Repository) GetAllAccounts() ([]*models.BinanceAccount, error) {
 	query := `
-		SELECT id, name, api_key, api_secret, is_testnet, is_active, is_default, created_at, updated_at
+		SELECT id, name, api_key, api_secret, is_testnet, is_active, is_default,
+			leverage, order_amount, target_percent, stoploss_percent, order_timeout,
+			created_at, updated_at
 		FROM binance_accounts
 		ORDER BY is_default DESC, name ASC
 	`
@@ -496,6 +523,11 @@ func (r *Repository) GetAllAccounts() ([]*models.BinanceAccount, error) {
 			&account.IsTestnet,
 			&account.IsActive,
 			&account.IsDefault,
+			&account.Leverage,
+			&account.OrderAmount,
+			&account.TargetPercent,
+			&account.StopLossPercent,
+			&account.OrderTimeout,
 			&account.CreatedAt,
 			&account.UpdatedAt,
 		)

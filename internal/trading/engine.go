@@ -132,17 +132,53 @@ func (e *Engine) ProcessMessage(msg *models.Message) error {
 		"symbol": signal.Symbol,
 	}).Info("New trading signal detected")
 
-	// Check if executor is available
-	if e.executor == nil {
-		err := fmt.Errorf("no executor available: please configure a default Binance account")
+	// Get all active accounts
+	accounts, err := e.repo.GetActiveAccounts()
+	if err != nil {
+		e.logger.Errorf("Failed to get active accounts: %v", err)
+		return err
+	}
+
+	if len(accounts) == 0 {
+		err := fmt.Errorf("no active Binance accounts configured")
 		e.logger.Error(err.Error())
 		return err
 	}
 
-	// Execute the signal directly - no database saving
-	if err := e.executor.ExecuteSignal(signal); err != nil {
-		e.logger.Errorf("Failed to execute signal: %v", err)
-		return err
+	// Execute the signal on ALL active accounts
+	var executionErrors []error
+	successCount := 0
+
+	for _, account := range accounts {
+		// Get the Binance client for this account
+		client, exists := e.binanceClients[account.ID]
+		if !exists {
+			e.logger.Warnf("No Binance client found for account %s (ID: %d), skipping", account.Name, account.ID)
+			continue
+		}
+
+		// Create executor for this account
+		executor := NewOrderExecutor(client, e.repo, e.config, e.logger)
+		executor.accountID = account.ID
+
+		e.logger.Infof("Executing signal on account: %s (ID: %d)", account.Name, account.ID)
+
+		// Execute the signal with this account's configuration
+		if err := executor.ExecuteSignal(signal, account); err != nil {
+			e.logger.Errorf("Failed to execute signal on account %s: %v", account.Name, err)
+			executionErrors = append(executionErrors, fmt.Errorf("account %s: %w", account.Name, err))
+		} else {
+			successCount++
+			e.logger.Infof("Successfully executed signal on account: %s", account.Name)
+		}
+	}
+
+	// Report results
+	e.logger.Infof("Signal execution completed: %d/%d accounts successful", successCount, len(accounts))
+
+	if len(executionErrors) > 0 && successCount == 0 {
+		// All accounts failed
+		return fmt.Errorf("signal execution failed on all accounts: %v", executionErrors)
 	}
 
 	return nil
