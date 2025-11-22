@@ -110,6 +110,12 @@ func (e *Engine) ProcessMessage(msg *models.Message) error {
 		return nil
 	}
 
+	// Check if parser is initialized
+	if e.parser == nil {
+		e.logger.Warn("Trading is enabled but parser is not initialized, skipping message processing")
+		return nil
+	}
+
 	// Try to parse signal
 	signal, err := e.parser.Parse(msg)
 	if err != nil {
