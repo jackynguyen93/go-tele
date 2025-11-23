@@ -443,6 +443,26 @@ func (s *Server) handleGetAccount(w http.ResponseWriter, r *http.Request) {
 	s.respondJSON(w, http.StatusOK, account)
 }
 
+// validateAccountConfig validates account trading configuration
+func validateAccountConfig(account *models.BinanceAccount) error {
+	if account.Leverage <= 0 || account.Leverage > 125 {
+		return fmt.Errorf("leverage must be between 1 and 125, got %d", account.Leverage)
+	}
+	if account.OrderAmount <= 0 {
+		return fmt.Errorf("order amount must be greater than 0, got %.2f", account.OrderAmount)
+	}
+	if account.TargetPercent <= 0 {
+		return fmt.Errorf("target percent must be greater than 0, got %.4f", account.TargetPercent)
+	}
+	if account.StopLossPercent <= 0 {
+		return fmt.Errorf("stop loss percent must be greater than 0, got %.4f", account.StopLossPercent)
+	}
+	if account.OrderTimeout < 0 {
+		return fmt.Errorf("order timeout must be non-negative, got %d", account.OrderTimeout)
+	}
+	return nil
+}
+
 func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 	var account models.BinanceAccount
 	if err := json.NewDecoder(r.Body).Decode(&account); err != nil {
@@ -478,6 +498,12 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 		account.OrderTimeout = 600
 	}
 
+	// Validate account configuration
+	if err := validateAccountConfig(&account); err != nil {
+		s.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	if err := s.repo.SaveAccount(&account); err != nil {
 		s.respondError(w, http.StatusInternalServerError, "Failed to create account")
 		return
@@ -504,6 +530,12 @@ func (s *Server) handleUpdateAccount(w http.ResponseWriter, r *http.Request) {
 
 	account.ID = id
 	account.UpdatedAt = time.Now()
+
+	// Validate account configuration
+	if err := validateAccountConfig(&account); err != nil {
+		s.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	if err := s.repo.UpdateAccount(&account); err != nil {
 		s.respondError(w, http.StatusInternalServerError, "Failed to update account")

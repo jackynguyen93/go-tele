@@ -107,6 +107,20 @@ func (e *OrderExecutor) ExecuteSignal(signal *models.Signal, account *models.Bin
 	targetPercent := account.TargetPercent
 	stopLossPercent := account.StopLossPercent
 
+	// Validate account configuration
+	if leverage <= 0 || leverage > 125 {
+		return fmt.Errorf("invalid leverage %d for account %s (must be between 1 and 125)", leverage, account.Name)
+	}
+	if orderAmount <= 0 {
+		return fmt.Errorf("invalid order amount %.2f for account %s (must be greater than 0)", orderAmount, account.Name)
+	}
+	if targetPercent <= 0 {
+		return fmt.Errorf("invalid target percent %.4f for account %s (must be greater than 0)", targetPercent, account.Name)
+	}
+	if stopLossPercent <= 0 {
+		return fmt.Errorf("invalid stop loss percent %.4f for account %s (must be greater than 0)", stopLossPercent, account.Name)
+	}
+
 	// Calculate prices (divide by leverage since price movement is amplified)
 	// e.g., 20% target with 10x leverage = 2% price change needed
 	takeProfitPrice := entryPrice * (1 + targetPercent/float64(leverage))

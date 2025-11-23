@@ -543,7 +543,9 @@ func (r *Repository) GetAllAccounts() ([]*models.BinanceAccount, error) {
 // GetActiveAccounts retrieves all active Binance accounts
 func (r *Repository) GetActiveAccounts() ([]*models.BinanceAccount, error) {
 	query := `
-		SELECT id, name, api_key, api_secret, is_testnet, is_active, is_default, created_at, updated_at
+		SELECT id, name, api_key, api_secret, is_testnet, is_active, is_default,
+			leverage, order_amount, target_percent, stoploss_percent, order_timeout,
+			created_at, updated_at
 		FROM binance_accounts
 		WHERE is_active = 1
 		ORDER BY is_default DESC, name ASC
@@ -565,6 +567,11 @@ func (r *Repository) GetActiveAccounts() ([]*models.BinanceAccount, error) {
 			&account.IsTestnet,
 			&account.IsActive,
 			&account.IsDefault,
+			&account.Leverage,
+			&account.OrderAmount,
+			&account.TargetPercent,
+			&account.StopLossPercent,
+			&account.OrderTimeout,
 			&account.CreatedAt,
 			&account.UpdatedAt,
 		)
@@ -580,7 +587,9 @@ func (r *Repository) GetActiveAccounts() ([]*models.BinanceAccount, error) {
 // GetDefaultAccount retrieves the default Binance account
 func (r *Repository) GetDefaultAccount() (*models.BinanceAccount, error) {
 	query := `
-		SELECT id, name, api_key, api_secret, is_testnet, is_active, is_default, created_at, updated_at
+		SELECT id, name, api_key, api_secret, is_testnet, is_active, is_default,
+			leverage, order_amount, target_percent, stoploss_percent, order_timeout,
+			created_at, updated_at
 		FROM binance_accounts
 		WHERE is_default = 1 AND is_active = 1
 		LIMIT 1
@@ -594,6 +603,11 @@ func (r *Repository) GetDefaultAccount() (*models.BinanceAccount, error) {
 		&account.IsTestnet,
 		&account.IsActive,
 		&account.IsDefault,
+		&account.Leverage,
+		&account.OrderAmount,
+		&account.TargetPercent,
+		&account.StopLossPercent,
+		&account.OrderTimeout,
 		&account.CreatedAt,
 		&account.UpdatedAt,
 	)
