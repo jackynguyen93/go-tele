@@ -32,6 +32,10 @@ type OrderExecutor struct {
 	// Recent signal tracking (prevent duplicates within 48h)
 	recentSignals map[string]time.Time
 	signalsMu     sync.RWMutex
+
+	// Function to ensure symbol configuration (leverage and margin type)
+	// This is provided by the Engine to use a shared cache
+	ensureSymbolConfig func(symbol string, leverage int, marginType string) error
 }
 
 // LogEntry represents an entry to be logged asynchronously
@@ -211,13 +215,20 @@ func (e *OrderExecutor) ExecuteSignal(signal *models.Signal, account *models.Bin
 		"leverage":          leverage,
 	}).Info("Executing trading signal")
 
-	// Set leverage and margin type
-	if err := e.binanceClient.SetLeverage(signal.Symbol, leverage); err != nil {
-		return fmt.Errorf("failed to set leverage: %w", err)
-	}
-
-	if err := e.binanceClient.SetMarginType(signal.Symbol, "CROSSED"); err != nil {
-		return fmt.Errorf("failed to set margin type: %w", err)
+	// Ensure symbol is configured (leverage and margin type) - only set if not already configured
+	// Use the provided function if available, otherwise set directly (for backward compatibility)
+	if e.ensureSymbolConfig != nil {
+		if err := e.ensureSymbolConfig(signal.Symbol, leverage, "ISOLATED"); err != nil {
+			return fmt.Errorf("failed to configure symbol: %w", err)
+		}
+	} else {
+		// Fallback: set directly if no function provided (shouldn't happen in normal operation)
+		if err := e.binanceClient.SetLeverage(signal.Symbol, leverage); err != nil {
+			return fmt.Errorf("failed to set leverage: %w", err)
+		}
+		if err := e.binanceClient.SetMarginType(signal.Symbol, "ISOLATED"); err != nil {
+			return fmt.Errorf("failed to set margin type: %w", err)
+		}
 	}
 
 	// Execute 3 orders in parallel for speed

@@ -2,6 +2,7 @@ package trading
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/sirupsen/logrus"
 	"tdlib-go/internal/binance"
@@ -21,6 +22,17 @@ type Engine struct {
 	config         *config.Config
 	logger         *logrus.Logger
 	binanceClients map[int64]*binance.Client // Added missing field
+
+	// Symbol configuration cache (leverage and margin type) per account
+	// Key format: "accountID:symbol"
+	symbolConfigs map[string]*SymbolConfig
+	configMu      sync.RWMutex
+}
+
+// SymbolConfig tracks the configured leverage and margin type for a symbol
+type SymbolConfig struct {
+	Leverage   int
+	MarginType string
 }
 
 // NewEngine creates a new trading engine
@@ -32,6 +44,7 @@ func NewEngine(repo *storage.Repository, cfg *config.Config, logger *logrus.Logg
 			config:         cfg,
 			logger:         logger,
 			binanceClients: make(map[int64]*binance.Client),
+			symbolConfigs:  make(map[string]*SymbolConfig),
 		}, nil
 	}
 
@@ -81,6 +94,7 @@ func NewEngine(repo *storage.Repository, cfg *config.Config, logger *logrus.Logg
 		webapi:         nil, // Will be set later via SetWebAPI
 		config:         cfg,
 		logger:         logger,
+		symbolConfigs:  make(map[string]*SymbolConfig),
 	}
 
 	return engine, nil
@@ -89,6 +103,42 @@ func NewEngine(repo *storage.Repository, cfg *config.Config, logger *logrus.Logg
 // SetWebAPI sets the web API server for broadcasting updates
 func (e *Engine) SetWebAPI(webapi *webapi.Server) {
 	e.webapi = webapi
+}
+
+// ensureSymbolConfig ensures the symbol has the correct leverage and margin type configured for an account.
+// It caches the configuration to avoid redundant API calls on subsequent orders.
+func (e *Engine) ensureSymbolConfig(accountID int64, symbol string, leverage int, marginType string, client *binance.Client) error {
+	cacheKey := fmt.Sprintf("%d:%s", accountID, symbol)
+
+	e.configMu.RLock()
+	cached, exists := e.symbolConfigs[cacheKey]
+	e.configMu.RUnlock()
+
+	// If already configured with the same values, skip API calls
+	if exists && cached.Leverage == leverage && cached.MarginType == marginType {
+		e.logger.Debugf("Symbol %s for account %d already configured (leverage: %dx, margin: %s), skipping", symbol, accountID, leverage, marginType)
+		return nil
+	}
+
+	// Set leverage and margin type via API
+	if err := client.SetLeverage(symbol, leverage); err != nil {
+		return fmt.Errorf("failed to set leverage: %w", err)
+	}
+
+	if err := client.SetMarginType(symbol, marginType); err != nil {
+		return fmt.Errorf("failed to set margin type: %w", err)
+	}
+
+	// Update cache
+	e.configMu.Lock()
+	e.symbolConfigs[cacheKey] = &SymbolConfig{
+		Leverage:   leverage,
+		MarginType: marginType,
+	}
+	e.configMu.Unlock()
+
+	e.logger.Infof("Configured symbol %s for account %d (leverage: %dx, margin: %s)", symbol, accountID, leverage, marginType)
+	return nil
 }
 
 // Start starts the trading engine
@@ -166,6 +216,10 @@ func (e *Engine) ProcessMessage(msg *models.Message) error {
 		// Create executor for this account
 		executor := NewOrderExecutor(client, e.repo, e.config, e.logger)
 		executor.accountID = account.ID
+		// Set the ensureSymbolConfig function to use engine's shared cache
+		executor.ensureSymbolConfig = func(symbol string, leverage int, marginType string) error {
+			return e.ensureSymbolConfig(account.ID, symbol, leverage, marginType, client)
+		}
 
 		e.logger.Infof("Executing signal on account: %s (ID: %d)", account.Name, account.ID)
 
