@@ -33,7 +33,8 @@ type FilterInfo struct {
 	MinQty      string  `json:"minQty,omitempty"`
 	MaxQty      string  `json:"maxQty,omitempty"`
 	StepSize    string  `json:"stepSize,omitempty"`
-	MinNotional string  `json:"minNotional,omitempty"`
+	Notional    string  `json:"notional,omitempty"` // Used by MIN_NOTIONAL filter
+	MinNotional string  `json:"minNotional,omitempty"` // Fallback field name
 }
 
 // PriceTicker represents a price ticker

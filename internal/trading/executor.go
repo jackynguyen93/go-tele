@@ -188,22 +188,50 @@ func (e *OrderExecutor) ExecuteSignal(signal *models.Signal, account *models.Bin
 	}
 
 	// Check and adjust for MIN_NOTIONAL requirement
-	if minNotionalFilter != nil && minNotionalFilter.MinNotional != "" {
-		minNotional, err := strconv.ParseFloat(minNotionalFilter.MinNotional, 64)
-		if err == nil {
-			notional := quantity * entryPrice
-			if notional < minNotional {
-				// Increase quantity to meet minimum notional
-				quantity = minNotional / entryPrice
-
-				// Re-apply step size rounding after adjustment
-				if lotFilter != nil && lotFilter.StepSize != "" {
-					quantity = e.roundToStepSize(quantity, lotFilter.StepSize, lotFilter.MinQty, lotFilter.MaxQty)
-				}
-
-				e.logger.Infof("Adjusted quantity to meet MIN_NOTIONAL (%.2f USD): %.8f", minNotional, quantity)
+	// Parse the minimum notional from the exchange filter
+	var minNotional float64
+	if minNotionalFilter != nil {
+		// Try the "notional" field first (this is what the API actually returns)
+		if minNotionalFilter.Notional != "" {
+			if parsed, err := strconv.ParseFloat(minNotionalFilter.Notional, 64); err == nil {
+				minNotional = parsed
+			}
+		} else if minNotionalFilter.MinNotional != "" {
+			// Fallback to "minNotional" field
+			if parsed, err := strconv.ParseFloat(minNotionalFilter.MinNotional, 64); err == nil {
+				minNotional = parsed
 			}
 		}
+	}
+
+	// If no MIN_NOTIONAL filter found or it has no value, use a conservative default
+	if minNotional == 0 {
+		minNotional = 5.0 // Conservative default for most symbols
+		e.logger.Warnf("No MIN_NOTIONAL filter found for %s, using default: %.2f USD", signal.Symbol, minNotional)
+	}
+
+	notional := quantity * entryPrice
+	if notional < minNotional {
+		// Increase quantity to meet minimum notional, with 1% buffer to account for price movement
+		quantity = (minNotional * 1.01) / entryPrice
+
+		// Re-apply step size rounding after adjustment
+		if lotFilter != nil && lotFilter.StepSize != "" {
+			quantity = e.roundToStepSize(quantity, lotFilter.StepSize, lotFilter.MinQty, lotFilter.MaxQty)
+		}
+
+		// Verify the adjusted quantity still meets minimum notional after rounding
+		newNotional := quantity * entryPrice
+		if newNotional < minNotional {
+			// If rounding caused us to go below minimum, add one more step
+			if lotFilter != nil && lotFilter.StepSize != "" {
+				step, _ := strconv.ParseFloat(lotFilter.StepSize, 64)
+				quantity += step
+			}
+		}
+
+		e.logger.Infof("Adjusted quantity to meet MIN_NOTIONAL (%.2f USD): %.8f (notional: %.2f USD)",
+			minNotional, quantity, quantity*entryPrice)
 	}
 
 	e.logger.WithFields(logrus.Fields{
