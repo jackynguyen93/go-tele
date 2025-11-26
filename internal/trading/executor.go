@@ -464,11 +464,12 @@ func (e *OrderExecutor) monitorOrderTimeouts() {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
-	// Track which positions we've already closed to avoid duplicate closes
-	closedPositions := make(map[string]bool)
-
 	for range ticker.C {
 		e.ordersMu.Lock()
+
+		// Track which positions we've already attempted to close in this tick
+		closedPositions := make(map[string]bool)
+
 		for orderID, timeout := range e.pendingOrders {
 			if time.Since(timeout.CreatedAt) > timeout.TimeoutDuration {
 				// Timeout reached, cancel order
@@ -477,28 +478,57 @@ func (e *OrderExecutor) monitorOrderTimeouts() {
 				binanceOrderID, _ := strconv.ParseInt(orderID, 10, 64)
 				_, err := e.binanceClient.CancelOrder(timeout.Symbol, binanceOrderID)
 				if err != nil {
-					e.logger.Errorf("Failed to cancel timed-out order %s: %v", orderID, err)
+					// Log error but continue - order might already be filled/canceled
+					e.logger.Warnf("Failed to cancel timed-out order %s: %v", orderID, err)
 				}
 
-				// Close the position if not already closed
+				// Check if there's an actual open position before trying to close it
 				positionKey := timeout.Symbol
 				if !closedPositions[positionKey] {
-					e.logger.Infof("Closing open position for %s due to timeout", timeout.Symbol)
-
-					// Place market sell order to close position
-					_, err := e.binanceClient.PlaceOrder(&binance.NewOrder{
-						Symbol:     timeout.Symbol,
-						Side:       "SELL",
-						Type:       "MARKET",
-						Quantity:   timeout.Quantity,
-						ReduceOnly: true,
-					})
-
+					// Get current positions to check if position exists
+					positions, err := e.binanceClient.GetPositions()
 					if err != nil {
-						e.logger.Errorf("Failed to close position for %s: %v", timeout.Symbol, err)
+						e.logger.Errorf("Failed to get positions for %s: %v", timeout.Symbol, err)
 					} else {
-						e.logger.Infof("Successfully closed position for %s (qty: %.8f)", timeout.Symbol, timeout.Quantity)
-						closedPositions[positionKey] = true
+						// Find the position for this symbol
+						var positionAmt float64
+						for _, pos := range positions {
+							if pos.Symbol == timeout.Symbol {
+								positionAmt, _ = strconv.ParseFloat(pos.PositionAmt, 64)
+								break
+							}
+						}
+
+						// Only try to close if there's an actual position
+						if positionAmt != 0 {
+							e.logger.Infof("Closing open position for %s due to timeout (amount: %.8f)", timeout.Symbol, positionAmt)
+
+							// Determine the side based on position amount
+							side := "SELL"
+							qty := positionAmt
+							if positionAmt < 0 {
+								side = "BUY"
+								qty = -positionAmt // Make it positive
+							}
+
+							// Place market order to close position
+							_, err := e.binanceClient.PlaceOrder(&binance.NewOrder{
+								Symbol:     timeout.Symbol,
+								Side:       side,
+								Type:       "MARKET",
+								Quantity:   qty,
+								ReduceOnly: true,
+							})
+
+							if err != nil {
+								e.logger.Errorf("Failed to close position for %s: %v", timeout.Symbol, err)
+							} else {
+								e.logger.Infof("Successfully closed position for %s (qty: %.8f)", timeout.Symbol, qty)
+								closedPositions[positionKey] = true
+							}
+						} else {
+							e.logger.Infof("No open position found for %s, skipping close", timeout.Symbol)
+						}
 					}
 				}
 
