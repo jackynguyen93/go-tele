@@ -80,6 +80,19 @@
         >
       </div>
 
+      <div class="form-group">
+        <label>Ignore Tokens (Comma-separated)</label>
+        <input
+          type="text"
+          v-model="config.ignore_tokens"
+          @blur="saveConfig"
+          placeholder="e.g., BTC, ETH, SOL (or BTCUSDT, ETHUSDT, SOLUSDT)"
+        >
+        <small style="color: #71767b; font-size: 12px; margin-top: 5px; display: block;">
+          Enter tokens to ignore. You can use either "BTC" or "BTCUSDT" format. Tokens in this list will not trigger orders.
+        </small>
+      </div>
+
       <div v-if="saveMessage" class="save-message">
         {{ saveMessage }}
       </div>
@@ -101,7 +114,8 @@ export default {
         target_percent: 0.02,
         stoploss_percent: 0.01,
         order_timeout: 600,
-        signal_pattern: ''
+        signal_pattern: '',
+        ignore_tokens: ''
       },
       saveMessage: ''
     }

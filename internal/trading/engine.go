@@ -184,6 +184,14 @@ func (e *Engine) ProcessMessage(msg *models.Message) error {
 		return nil
 	}
 
+	// Check if token is in ignore list
+	if e.config.Trading.IsTokenIgnored(signal.Symbol) {
+		e.logger.WithFields(logrus.Fields{
+			"symbol": signal.Symbol,
+		}).Info("Token is in ignore list, skipping signal")
+		return nil
+	}
+
 	e.logger.WithFields(logrus.Fields{
 		"symbol": signal.Symbol,
 	}).Info("New trading signal detected")

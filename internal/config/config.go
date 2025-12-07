@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -61,15 +62,16 @@ type BinanceConfig struct {
 
 // TradingConfig contains trading parameters
 type TradingConfig struct {
-	Enabled          bool    `yaml:"enabled"`
-	Leverage         int     `yaml:"leverage"`
-	OrderAmount      float64 `yaml:"order_amount"`       // Position size in USDT
-	TargetPercent    float64 `yaml:"target_percent"`     // Take profit percentage (e.g., 0.02 for 2%)
-	StopLossPercent  float64 `yaml:"stoploss_percent"`   // Stop loss percentage (e.g., 0.01 for 1%)
-	OrderTimeout     int     `yaml:"order_timeout"`      // Timeout in seconds for TP/SL orders
-	SignalPattern    string  `yaml:"signal_pattern"`     // Regex pattern for signal matching
-	MaxPositions     int     `yaml:"max_positions"`      // Maximum concurrent positions
-	DryRun           bool    `yaml:"dry_run"`            // If true, don't execute real orders
+	Enabled          bool     `yaml:"enabled"`
+	Leverage         int      `yaml:"leverage"`
+	OrderAmount      float64  `yaml:"order_amount"`       // Position size in USDT
+	TargetPercent    float64  `yaml:"target_percent"`     // Take profit percentage (e.g., 0.02 for 2%)
+	StopLossPercent  float64  `yaml:"stoploss_percent"`   // Stop loss percentage (e.g., 0.01 for 1%)
+	OrderTimeout     int      `yaml:"order_timeout"`      // Timeout in seconds for TP/SL orders
+	SignalPattern    string   `yaml:"signal_pattern"`     // Regex pattern for signal matching
+	MaxPositions     int      `yaml:"max_positions"`      // Maximum concurrent positions
+	DryRun           bool     `yaml:"dry_run"`            // If true, don't execute real orders
+	IgnoreTokens     []string `yaml:"ignore_tokens"`      // List of tokens to ignore (symbols without USDT suffix)
 }
 
 // WebAPIConfig contains web API server settings
@@ -209,4 +211,50 @@ func (c *Config) LoadSettingsFromMap(settings map[string]string) {
 	if val, ok := settings["trading.signal_pattern"]; ok {
 		c.Trading.SignalPattern = val
 	}
+	if val, ok := settings["trading.ignore_tokens"]; ok {
+		// Parse comma-separated tokens, trim whitespace, and normalize to uppercase
+		c.Trading.IgnoreTokens = parseIgnoreTokens(val)
+	}
+}
+
+// parseIgnoreTokens parses a comma-separated string of tokens into a slice
+func parseIgnoreTokens(val string) []string {
+	if val == "" {
+		return nil
+	}
+	
+	// Split by comma and clean up
+	tokens := make([]string, 0)
+	parts := strings.Split(val, ",")
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			// Normalize to uppercase and ensure USDT suffix
+			trimmed = strings.ToUpper(trimmed)
+			if !strings.HasSuffix(trimmed, "USDT") {
+				trimmed = trimmed + "USDT"
+			}
+			tokens = append(tokens, trimmed)
+		}
+	}
+	return tokens
+}
+
+// IsTokenIgnored checks if a symbol (token) is in the ignore list
+func (tc *TradingConfig) IsTokenIgnored(symbol string) bool {
+	if len(tc.IgnoreTokens) == 0 {
+		return false
+	}
+	
+	// Normalize symbol to uppercase
+	symbol = strings.ToUpper(symbol)
+	
+	// Check if symbol matches any ignored token
+	for _, ignoredToken := range tc.IgnoreTokens {
+		if symbol == ignoredToken {
+			return true
+		}
+	}
+	
+	return false
 }

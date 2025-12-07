@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -335,6 +336,7 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		"max_positions":    s.getSettingInt(dbSettings, "trading.max_positions", s.config.Trading.MaxPositions),
 		"dry_run":          s.getSettingBool(dbSettings, "trading.dry_run", s.config.Trading.DryRun),
 		"signal_pattern":   s.getSettingString(dbSettings, "trading.signal_pattern", s.config.Trading.SignalPattern),
+		"ignore_tokens":    s.getSettingString(dbSettings, "trading.ignore_tokens", s.formatIgnoreTokens(s.config.Trading.IgnoreTokens)),
 	}
 
 	safeConfig := map[string]interface{}{
@@ -388,6 +390,12 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		if v, ok := trading["signal_pattern"].(string); ok {
 			s.config.Trading.SignalPattern = v
 			s.repo.SaveSetting("trading.signal_pattern", v)
+		}
+		if v, ok := trading["ignore_tokens"].(string); ok {
+			s.repo.SaveSetting("trading.ignore_tokens", v)
+			// Update config in memory by reloading settings
+			settings, _ := s.repo.GetAllSettings()
+			s.config.LoadSettingsFromMap(settings)
 		}
 	}
 
@@ -726,4 +734,29 @@ func (s *Server) getSettingBool(settings map[string]string, key string, defaultV
 		return val == "true"
 	}
 	return defaultValue
+}
+
+// formatIgnoreTokens formats a slice of tokens into a comma-separated string
+func (s *Server) formatIgnoreTokens(tokens []string) string {
+	if len(tokens) == 0 {
+		return ""
+	}
+	
+	// Remove USDT suffix for display (users can input with or without it)
+	result := make([]string, 0, len(tokens))
+	for _, token := range tokens {
+		if token == "" {
+			continue
+		}
+		// Remove USDT suffix for cleaner display
+		if len(token) > 4 && token[len(token)-4:] == "USDT" {
+			result = append(result, token[:len(token)-4])
+		} else {
+			result = append(result, token)
+		}
+	}
+	if len(result) == 0 {
+		return ""
+	}
+	return strings.Join(result, ", ")
 }
